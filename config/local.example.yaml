@@ -1,0 +1,27 @@
+app_env: local
+agent:
+  # Set a provider:model value, for example openai:gpt-5.5, to enable DeepAgent.
+  # Without it the deterministic ticket demo harness remains active locally.
+  model: null
+  skills_dir: src/skills
+  enabled_skills: [ticket-request]
+database:
+  host: localhost
+  port: 5432
+  name: deepagent
+  user: postgres
+  password: postgres
+api_auth_token: change-me
+log_level: INFO
+log_format: text
+tools:
+  # 设置 external_status_url 后会启用示例 HTTP Tool；root.cer 必须是有效 CA 证书。
+  external_status_url: null
+  root_ca_path: build/root.cer
+mcp_servers:
+  ticketing:
+    transport: mock
+    timeout_seconds: 15
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [get_resource_schema, validate_ticket_params, create_ticket]

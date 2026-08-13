@@ -1,0 +1,26 @@
+app_env: prod
+agent:
+  model: openai:gpt-5.5
+  skills_dir: src/skills
+  enabled_skills: [ticket-request]
+database:
+  host: 127.0.0.1
+  port: 5432
+  name: deepagent
+  user: IAM_DATABASE_USER
+api_auth_token: ${API_AUTH_TOKEN}
+log_level: INFO
+log_format: json
+tools:
+  external_status_url: null
+  root_ca_path: build/root.cer
+mcp_servers:
+  ticketing:
+    transport: http
+    url: https://mcp.example.internal/ticketing
+    headers:
+      Authorization: Bearer ${TICKETING_MCP_TOKEN}
+    timeout_seconds: 15
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [get_resource_schema, validate_ticket_params, create_ticket]

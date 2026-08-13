@@ -1,0 +1,94 @@
+"""Conversation business operations."""
+
+from __future__ import annotations
+
+# 会话服务只协调持久化与 Agent 生命周期，Agent 推理期间不持有数据库事务。
+
+import uuid
+import logging
+from collections.abc import AsyncIterator
+
+from fastapi import status
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.agent.harness_service import DeepAgentHarnessService
+from src.core.errors import DomainError
+from src.repositories.agent_run_repository import AgentRunRepository
+from src.repositories.conversation_repository import ConversationRepository
+from src.repositories.message_repository import MessageRepository
+
+logger = logging.getLogger(__name__)
+
+
+class ConversationService:
+    """Coordinate persisted chat history, Agent execution, and run lifecycle."""
+
+    def __init__(self, session: AsyncSession, agent_service: DeepAgentHarnessService) -> None:
+        self._conversations = ConversationRepository(session)
+        self._messages = MessageRepository(session)
+        self._runs = AgentRunRepository(session)
+        self._agent_service = agent_service
+
+    async def create(self, staff_id: str, title: str | None) -> dict[str, str | None]:
+        conversation = await self._conversations.create(staff_id, title)
+        logger.info("conversation_created conversation_id=%s staff_id=%s", conversation.id, staff_id)
+        return self._conversation_payload(conversation.id, conversation.title, conversation.created_at)
+
+    async def list(self, staff_id: str, page: int, page_size: int) -> dict[str, int | list[dict[str, str | None]]]:
+        conversations, total = await self._conversations.list(staff_id, page, page_size)
+        return {
+            "items": [self._conversation_payload(item.id, item.title, item.created_at) for item in conversations],
+            "page": page,
+            "page_size": page_size,
+            "total": total,
+        }
+
+    async def get(self, conversation_id: uuid.UUID, staff_id: str) -> dict[str, str | None]:
+        conversation = await self._require_conversation(conversation_id, staff_id)
+        return self._conversation_payload(conversation.id, conversation.title, conversation.created_at)
+
+    async def delete(self, conversation_id: uuid.UUID, staff_id: str) -> None:
+        conversation = await self._require_conversation(conversation_id, staff_id)
+        await self._conversations.delete(conversation)
+        logger.info("conversation_deleted conversation_id=%s staff_id=%s", conversation_id, staff_id)
+
+    async def messages(self, conversation_id: uuid.UUID, staff_id: str) -> list[dict[str, str]]:
+        await self._require_conversation(conversation_id, staff_id)
+        messages = await self._messages.list(conversation_id)
+        return [
+            {"id": str(item.id), "role": item.role, "content": item.content, "created_at": item.created_at.isoformat()}
+            for item in messages
+        ]
+
+    async def send(
+        self, conversation_id: uuid.UUID, staff_id: str, content: str
+    ) -> AsyncIterator[tuple[str, dict[str, str]]]:
+        await self._require_conversation(conversation_id, staff_id)
+        user_message = await self._messages.create(conversation_id, "user", content)
+        run = await self._runs.create(conversation_id, user_message.id)
+        logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
+        history = await self._messages.list(conversation_id)
+        answer_parts: list[str] = []
+        try:
+            async for event, payload in self._agent_service.reply(conversation_id, staff_id, content, history):
+                if event == "token":
+                    answer_parts.append(payload["content"])
+                yield event, payload
+            assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
+            await self._runs.complete(run)
+            logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
+            yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
+        except Exception:
+            await self._runs.fail(run, "Agent execution failed")
+            logger.exception("agent_run_failed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
+            raise
+
+    async def _require_conversation(self, conversation_id: uuid.UUID, staff_id: str):
+        conversation = await self._conversations.get(conversation_id, staff_id)
+        if conversation is None:
+            logger.warning("conversation_not_found conversation_id=%s staff_id=%s", conversation_id, staff_id)
+            raise DomainError("CONVERSATION_NOT_FOUND", "Conversation not found", status.HTTP_404_NOT_FOUND)
+        return conversation
+
+    def _conversation_payload(self, conversation_id: uuid.UUID, title: str | None, created_at) -> dict[str, str | None]:
+        return {"id": str(conversation_id), "title": title, "created_at": created_at.isoformat()}
