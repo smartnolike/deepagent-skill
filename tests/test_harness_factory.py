@@ -3,7 +3,7 @@
 # 未配置真实模型时必须保持可运行的 Mock harness，便于本地回归测试。
 
 from src.agent.harness_service import DeepAgentHarnessService
-from src.agent.factory import (
+from src.agent.agent_factory import (
     _harness_profile_key,
     _response_language_system_prompt,
     _skill_bound_system_prompt,

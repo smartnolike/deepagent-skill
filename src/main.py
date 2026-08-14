@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.agent.factory import create_agent_service
+from src.agent.agent_factory import create_agent_service
 from src.agent.checkpointer import create_checkpointer_context
 from src.api.router import router
 from src.config.load_settings import load_settings
