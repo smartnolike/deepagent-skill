@@ -19,7 +19,7 @@ from src.agent.agent_context import AgentContext
 from src.agent.harness_service import DeepAgentHarnessService
 from src.agent.middleware.response_language_middleware import ResponseLanguageMiddleware
 from src.agent.model_factory import create_chat_model
-from src.agent.service import MockHarnessService
+from src.agent.mock_service import MockHarnessService
 from src.common.httpx_client import HttpxClient
 from src.config.settings import Settings
 from src.mcp.manager import McpClientManager

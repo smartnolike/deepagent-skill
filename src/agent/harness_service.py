@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from src.common.language import ResponseLanguage
-from src.agent.service import MockHarnessService
+from src.agent.mock_service import MockHarnessService
 from src.database.models.agent.message import Message
 from src.services.danaan_memory import DANAAN_BASE_CONTEXT_KEY
 from src.services.memory_service import MemoryService
