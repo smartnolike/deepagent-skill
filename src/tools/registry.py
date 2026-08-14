@@ -10,7 +10,9 @@ from src.common.httpx_client import HttpxClient
 from src.tools.echo import echo_text
 from src.tools.external_status import get_configured_service_status
 from src.tools.danaan_template import get_danaan_resource_template
+from src.tools.skill_memory import create_get_skill_memory_tool
 from src.tools.user_form import request_user_form
+from src.services.memory_service import MemoryService
 
 
 class CustomToolRegistry:
@@ -21,15 +23,17 @@ class CustomToolRegistry:
         settings: ToolSettings,
         client: HttpxClient | None,
         session_factory: async_sessionmaker[AsyncSession] | None,
+        memory_service: MemoryService,
     ) -> None:
         self._settings = settings
         self._client = client
         self._session_factory = session_factory
+        self._memory_service = memory_service
 
     def build(self) -> list[StructuredTool]:
         """仅在外部状态 API 已显式配置时注册示例 Tool。"""
         # 无依赖 Tool 可直接注册；依赖 HTTP client 的 Tool 则按 YAML 开关注册。
-        tools: list[StructuredTool] = [echo_text, request_user_form]
+        tools: list[StructuredTool] = [echo_text, request_user_form, create_get_skill_memory_tool(self._memory_service)]
         if self._session_factory is not None:
             async def get_template(resource_name: str) -> str:
                 return await get_danaan_resource_template(self._session_factory, resource_name)

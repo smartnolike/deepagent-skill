@@ -1,7 +1,7 @@
 ---
 name: danaan-cloud-resource
 description: 为 Danaan 管理的 Cloud Storage、BigQuery 和 Cloud SQL 创建资源申请。确认基础资料，按 resourceName 读取模板，仅替换资源名后提交经用户确认的申请。
-allowed-tools: request_user_form danaan_get_resource_template danaan__external_resource_add
+allowed-tools: get_skill_memory request_user_form danaan_get_resource_template danaan__external_resource_add
 metadata:
   version: "1.2.0"
 ---
@@ -63,11 +63,12 @@ envName
 useCaseShortName
 ```
 
-1. 读取 runtime `danaan_base_context`；它是后端从 staff scoped memory key
-   `danaan-cloud-resource:base-context` 精确加载的唯一 Danaan 默认资料来源。
+1. 用户发起 Danaan 申请时，先调用
+   `get_skill_memory(key="danaan-cloud-resource:base-context")`。该 Tool 仅会读取当前 staff 的精确 key；其
+   `found=true` 且 `value` 中五项均存在时，`value` 才是唯一可用的 Danaan 默认资料来源。
 2. **仅当五项均存在时，不得调用 `request_user_form`，也不得触发任何表单 SSE 事件。** 先以 runtime
    `response_language` 输出普通的自然语言确认消息，说明资料来自之前已保存的记录，并展示以下 Markdown
-   表格（字段名保持 English，值使用 `danaan_base_context` 中的实际值）：
+   表格（字段名保持 English，值使用 Tool 返回 `value` 中的实际值）：
 
    ```markdown
    ## 基础资料已确认（沿用已保存资料）
@@ -100,10 +101,10 @@ form_name = "danaan-base-context"
 title = "Danaan Base Information"
 ```
 
-已有长期记忆并因用户明确拒绝而打开表单时，必须传入：
+已有长期记忆并因用户明确拒绝而打开表单时，必须传入刚才 Tool 返回的 `value`：
 
 ```text
-prefilled_values = danaan_base_context
+prefilled_values = <get_skill_memory.value>
 ```
 
 字段顺序与约束如下：

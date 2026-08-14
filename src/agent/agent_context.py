@@ -1,6 +1,6 @@
 """Immutable runtime context supplied to every DeepAgent run."""
 
-# 运行上下文包含员工、会话和记忆，不从静态 API Token 反推用户身份。
+# 运行上下文只包含通用身份与关联信息；Skill 专属记忆必须按需通过受控 Tool 读取。
 
 from typing import TypedDict
 
@@ -14,5 +14,3 @@ class AgentContext(TypedDict):
     conversation_id: str
     request_id: str
     response_language: ResponseLanguage
-    memories: list[dict[str, object]]
-    danaan_base_context: dict[str, str] | None

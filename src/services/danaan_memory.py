@@ -5,6 +5,7 @@
 from typing import Any
 
 from src.core.errors import DomainError
+from src.services.memory_service import MemoryService
 
 DANAAN_BASE_CONTEXT_KEY = "danaan-cloud-resource:base-context"
 DANAAN_BASE_CONTEXT_FIELDS = (
@@ -29,3 +30,13 @@ def extract_danaan_base_context(value: dict[str, Any]) -> dict[str, str]:
             )
         context[field] = raw_value.strip()
     return context
+
+
+async def save_danaan_base_context_from_form(
+    memory_service: MemoryService, staff_id: str, response: dict[str, object] | None
+) -> None:
+    """Validate and persist Danaan's confirmed base-context form response only."""
+    if response is None:
+        raise DomainError("INVALID_DANAAN_BASE_CONTEXT", "Danaan base context response is required", 422)
+    context = extract_danaan_base_context(response)
+    await memory_service.put(staff_id, DANAAN_BASE_CONTEXT_KEY, context)

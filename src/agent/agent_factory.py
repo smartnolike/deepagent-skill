@@ -41,7 +41,7 @@ def create_agent_service(
     if settings.agent.model is None:
         if not settings.allow_test_doubles:
             raise RuntimeError("agent.model is required")
-        return DeepAgentHarnessService(None, fallback, memory_service)
+        return DeepAgentHarnessService(None, fallback)
     register_harness_profile(
         _harness_profile_key(settings.agent.model),
         HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
@@ -55,7 +55,7 @@ def create_agent_service(
     graph = create_deep_agent(
         model=create_chat_model(settings.agent, httpx_client),
         tools=McpToolRegistry(mcp_manager).build()
-        + CustomToolRegistry(settings.tools, httpx_client, session_factory).build(),
+        + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build(),
         system_prompt=(
             f"{settings.agent.system_prompt}\n\n{_response_language_system_prompt()}\n\n"
             f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}"
@@ -69,7 +69,7 @@ def create_agent_service(
         middleware=[ResponseLanguageMiddleware()],
         name="deepagent-platform",
     )
-    return DeepAgentHarnessService(graph, fallback, memory_service)
+    return DeepAgentHarnessService(graph, fallback)
 
 
 def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, object]]:

@@ -18,7 +18,7 @@ from src.core.errors import DomainError
 from src.repositories.agent_run_repository import AgentRunRepository
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.message_repository import MessageRepository
-from src.services.danaan_memory import DANAAN_BASE_CONTEXT_KEY, extract_danaan_base_context
+from src.services.danaan_memory import save_danaan_base_context_from_form
 from src.services.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
@@ -128,7 +128,9 @@ class ConversationService:
         history = await self._messages.list(conversation_id)
         last_user_content = next((message.content for message in reversed(history) if message.role == "user"), None)
         response_language = resolve_response_language(last_user_content, None)
-        await self._save_danaan_base_context(staff_id, action, form_name, response)
+        if action == "respond" and form_name == "danaan-base-context":
+            await save_danaan_base_context_from_form(self._memory_service, staff_id, response)
+            logger.info("danaan_base_context_saved staff_id=%s", staff_id)
         answer_parts: list[str] = []
         try:
             async for event, payload in self._agent_service.resume(
@@ -147,22 +149,6 @@ class ConversationService:
             await self._runs.fail(run, "Agent execution failed")
             logger.exception("tool_confirmation_failed agent_run_id=%s", run.id)
             raise
-
-    async def _save_danaan_base_context(
-        self,
-        staff_id: str,
-        action: str,
-        form_name: str | None,
-        response: dict[str, object] | None,
-    ) -> None:
-        """Persist confirmed Danaan base fields only after the dedicated form is submitted."""
-        if action != "respond" or form_name != "danaan-base-context":
-            return
-        if response is None:
-            raise DomainError("INVALID_DANAAN_BASE_CONTEXT", "Danaan base context response is required", 422)
-        context = extract_danaan_base_context(response)
-        await self._memory_service.put(staff_id, DANAAN_BASE_CONTEXT_KEY, context)
-        logger.info("danaan_base_context_saved staff_id=%s", staff_id)
 
     async def _require_conversation(
         self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage

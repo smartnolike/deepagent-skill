@@ -13,4 +13,5 @@ def test_saved_danaan_context_requires_natural_language_confirmation_before_form
     assert "不得调用 `request_user_form`，也不得触发任何表单 SSE 事件" in content
     assert "这是一个普通 Agent 回复，必须等待用户的下一条自然语言消息" in content
     assert "用户明确否定、要求重新选择或要求修改基础资料后，才调用" in content
-    assert "prefilled_values = danaan_base_context" in content
+    assert "get_skill_memory(key=\"danaan-cloud-resource:base-context\")" in content
+    assert "prefilled_values = <get_skill_memory.value>" in content
