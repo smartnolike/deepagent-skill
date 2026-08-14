@@ -22,6 +22,7 @@ from src.agent.model_factory import create_chat_model
 from src.agent.mock_service import MockHarnessService
 from src.common.httpx_client import HttpxClient
 from src.config.settings import Settings
+from src.core.runtime_secrets import RuntimeSecrets
 from src.mcp.manager import McpClientManager
 from src.mcp.tool_registry import McpToolRegistry
 from src.services.memory_service import MemoryService
@@ -32,6 +33,7 @@ def create_agent_service(
     settings: Settings,
     mcp_manager: McpClientManager,
     memory_service: MemoryService,
+    runtime_secrets: RuntimeSecrets | None = None,
     httpx_client: HttpxClient | None = None,
     checkpointer=None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -53,7 +55,7 @@ def create_agent_service(
     skills_root = project_root / settings.agent.skills_dir
     skill_paths = ["/"] if settings.agent.enabled_skills else []
     graph = create_deep_agent(
-        model=create_chat_model(settings.agent, httpx_client),
+        model=create_chat_model(settings.agent, httpx_client, runtime_secrets),
         tools=McpToolRegistry(mcp_manager).build()
         + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build(),
         system_prompt=(

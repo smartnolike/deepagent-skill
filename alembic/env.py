@@ -1,6 +1,6 @@
 """Alembic environment using the YAML-selected database URL."""
 
-# 迁移复用 APP_ENV 选中的 YAML 数据库连接，生产执行前必须确认目标环境。
+# 迁移复用 AGENT_ENV 选中的 YAML 数据库连接，生产执行前必须确认目标环境。
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool

@@ -3,6 +3,7 @@
 # 30 秒令牌应在同一有效窗口复用，临近过期时才由下一次模型请求触发刷新。
 
 import pytest
+from pydantic import SecretStr
 
 from src.agent.translator_token_provider import TranslatorTokenProvider
 from src.config.token_auth_settings import TokenAuthSettings
@@ -34,6 +35,7 @@ async def test_provider_reuses_short_lived_token_before_refresh_window() -> None
             service_account_password="secret",
             refresh_before_expiry_seconds=5,
         ),
+        SecretStr("secret"),
         client,  # type: ignore[arg-type]
     )
 
@@ -51,6 +53,7 @@ async def test_provider_raises_safe_error_for_invalid_response() -> None:
             service_account="svc",
             service_account_password="secret",
         ),
+        SecretStr("secret"),
         client,  # type: ignore[arg-type]
     )
 

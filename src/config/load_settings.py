@@ -1,6 +1,6 @@
 """YAML-only settings loader."""
 
-# 只允许 APP_ENV 选择 YAML 文件；业务配置均来自 YAML 或其显式环境变量引用。
+# 只允许 AGENT_ENV 选择 YAML 文件；业务配置均来自 YAML 或其显式环境变量引用。
 
 import os
 import re
@@ -39,8 +39,8 @@ def _expand_environment(value: Any) -> Any:
 
 
 def load_settings(config_dir: Path | None = None) -> Settings:
-    """Load ``config/{APP_ENV}.yaml``; APP_ENV only selects the file."""
-    app_env = os.getenv("APP_ENV", "local")
+    """Load ``config/{AGENT_ENV}.yaml``; AGENT_ENV only selects the file."""
+    app_env = os.getenv("AGENT_ENV", "local")
     base_dir = config_dir or Path(__file__).resolve().parents[2] / "config"
     config_file = base_dir / f"{app_env}.yaml"
     if not config_file.is_file():

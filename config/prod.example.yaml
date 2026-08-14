@@ -6,7 +6,7 @@ agent:
   token_auth:
     translator_url: ${TRANSLATOR_URL}
     service_account: ${SERVICE_ACCOUNT}
-    service_account_password: ${SERVICE_ACCOUNT_PASSWORD}
+    service_account_password_secret: ${MODEL_SERVICE_ACCOUNT_PASSWORD_SECRET_VERSION}
     refresh_before_expiry_seconds: 5
     request_timeout_seconds: 3
   skills_dir: skill-packages

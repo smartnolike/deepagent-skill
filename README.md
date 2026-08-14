@@ -4,7 +4,7 @@ Copy a YAML template and provide a local static API token:
 
 ```bash
 cp config/local.example.yaml config/local.yaml
-export APP_ENV=local
+export AGENT_ENV=local
 ```
 
 YAML 可以引用启动环境变量，例如 `api_auth_token: ${API_AUTH_TOKEN}` 或 MCP header
@@ -75,8 +75,29 @@ agent:
   token_auth:
     translator_url: ${TRANSLATOR_URL}
     service_account: ${SERVICE_ACCOUNT}
+    # local：环境变量中的直接密码
     service_account_password: ${SERVICE_ACCOUNT_PASSWORD}
 ```
+
+dev / prod 使用 Google Secret Manager 的**完整 Secret Version resource name**，与直接密码二选一：
+
+```yaml
+agent:
+  provider: internal
+  model: internal-model-name
+  base_url: ${MODEL_BASE_URL}
+  token_auth:
+    translator_url: ${TRANSLATOR_URL}
+    service_account: ${SERVICE_ACCOUNT}
+    service_account_password_secret: >-
+      projects/${GOOGLE_CLOUD_PROJECT}/secrets/model-translator-password/versions/3
+```
+
+服务在 FastAPI lifespan 启动期通过 ADC / GKE Workload Identity 读取该 Secret 一次，并以 `SecretStr` 驻留
+在进程内；之后每次 30 秒 Token 刷新只读取内存中的密码，**不会再次调用 Secret Manager**。读取失败会使
+服务启动失败而不会错误地进入 ready 状态。运行身份仅需目标 Secret 的
+`roles/secretmanager.secretAccessor` 权限。生产环境应指定版本号；密码轮换时更新 Secret Version 引用并滚动
+重启 Deployment，避免使用 `versions/latest`。
 
 ```yaml
 # OpenAI 官方外部模型

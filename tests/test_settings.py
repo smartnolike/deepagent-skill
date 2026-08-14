@@ -57,7 +57,7 @@ mcp_servers:
 """,
         encoding="utf-8",
     )
-    monkeypatch.setenv("APP_ENV", "local")
+    monkeypatch.setenv("AGENT_ENV", "local")
     monkeypatch.setenv("DB_PASSWORD", "postgres")
     monkeypatch.setenv("MCP_TOKEN", "mcp-secret")
     settings = load_settings(tmp_path)
@@ -80,6 +80,51 @@ def test_dynamic_token_auth_requires_model_base_url() -> None:
                         "service_account": "svc",
                         "service_account_password": "secret",
                     }
+                },
+            }
+        )
+
+
+def test_dynamic_token_auth_accepts_secret_manager_reference() -> None:
+    settings = Settings.model_validate(
+        {
+            "app_env": "dev",
+            "allow_test_doubles": True,
+            "database": {"host": "x", "name": "x", "user": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "agent": {
+                "base_url": "https://model.example/v1",
+                "token_auth": {
+                    "translator_url": "https://translator.example/token",
+                    "service_account": "svc",
+                    "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                },
+            },
+        }
+    )
+
+    assert settings.agent.token_auth is not None
+    assert settings.agent.token_auth.service_account_password is None
+
+
+def test_dynamic_token_auth_rejects_multiple_password_sources() -> None:
+    with pytest.raises(ValidationError, match="exactly one of service_account_password"):
+        Settings.model_validate(
+            {
+                "app_env": "dev",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "agent": {
+                    "base_url": "https://model.example/v1",
+                    "token_auth": {
+                        "translator_url": "https://translator.example/token",
+                        "service_account": "svc",
+                        "service_account_password": "password",
+                        "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                    },
                 },
             }
         )

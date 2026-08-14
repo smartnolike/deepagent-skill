@@ -5,6 +5,8 @@
 import asyncio
 import logging
 
+from pydantic import SecretStr
+
 from src.common.httpx_client import HttpxClient
 from src.config.token_auth_settings import TokenAuthSettings
 
@@ -14,8 +16,9 @@ logger = logging.getLogger(__name__)
 class TranslatorTokenProvider:
     """Fetch and cache a translator-issued bearer token until near expiry."""
 
-    def __init__(self, settings: TokenAuthSettings, httpx_client: HttpxClient) -> None:
+    def __init__(self, settings: TokenAuthSettings, service_account_password: SecretStr, httpx_client: HttpxClient) -> None:
         self._settings = settings
+        self._service_account_password = service_account_password
         self._httpx_client = httpx_client
         self._token: str | None = None
         self._expires_at: float = 0
@@ -48,7 +51,7 @@ class TranslatorTokenProvider:
                 self._settings.translator_url,
                 {
                     "service_account": self._settings.service_account,
-                    "service_account_password": self._settings.service_account_password.get_secret_value(),
+                    "service_account_password": self._service_account_password.get_secret_value(),
                 },
                 self._settings.request_timeout_seconds,
             )

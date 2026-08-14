@@ -17,7 +17,7 @@ Checkpointer：AsyncPostgresSaver → psycopg3 → PostgreSQL
 
 ## 2. 环境与数据库连接
 
-所有运行配置均使用 YAML 管理，不再使用 `.env` 作为配置来源。`APP_ENV=local | dev | prod` 选择配置文件；YAML 值可用 `${ENV_VAR}` 或 `${ENV_VAR:-default}` 引用环境变量，适合注入密码与 token。除 `APP_ENV` 和 YAML 显式引用的变量外，应用不得读取其他环境变量。数据库环境差异只能存在于配置层或 database factory；业务代码不得出现 `if env == "dev"` 一类判断。
+所有运行配置均使用 YAML 管理，不再使用 `.env` 作为配置来源。`AGENT_ENV=local | dev | prod` 选择配置文件；YAML 值可用 `${ENV_VAR}` 或 `${ENV_VAR:-default}` 引用环境变量，适合注入密码与 token。除 `AGENT_ENV` 和 YAML 显式引用的变量外，应用不得读取其他环境变量。数据库环境差异只能存在于配置层或 database factory；业务代码不得出现 `if env == "dev"` 一类判断。
 
 ### local
 
@@ -92,7 +92,7 @@ README.md
 
 ## 5. Settings
 
-使用 `pydantic_settings.BaseSettings` 加自定义 YAML settings source，并以 `APP_ENV` 选择 `config/{APP_ENV}.yaml`。运行时只读取这一份 YAML，不读取 `.env` 或其他环境变量。实际 `config/{local,dev,prod}.yaml` 均不得提交；仓库只提交对应的 `*.example.yaml`，实际文件从 example 复制并填写。`.gitignore` 必须忽略 `config/*.yaml`，但保留 `config/*.example.yaml`。
+使用 `pydantic_settings.BaseSettings` 加自定义 YAML settings source，并以 `AGENT_ENV` 选择 `config/{AGENT_ENV}.yaml`。运行时只读取这一份 YAML，不读取 `.env` 或其他环境变量。实际 `config/{local,dev,prod}.yaml` 均不得提交；仓库只提交对应的 `*.example.yaml`，实际文件从 example 复制并填写。`.gitignore` 必须忽略 `config/*.yaml`，但保留 `config/*.example.yaml`。
 
 配置 YAML 使用嵌套结构；Settings 将其映射为强类型配置模型。遵守“一文件一个 class”规则，`Settings`、数据库配置模型和 MCP server 配置模型必须分别放在独立模块中。Settings 至少等价包含：
 
@@ -416,7 +416,7 @@ alembic upgrade head
 uvicorn src.main:app --reload
 ```
 
-并说明配置加载方式：运行时仅设置 `APP_ENV` 来选择 `config/{APP_ENV}.yaml`，从同名 `*.example.yaml` 复制生成实际配置文件；实际 YAML 含数据库密码或 API token 时不得提交。并说明 dev/prod 架构：
+并说明配置加载方式：运行时仅设置 `AGENT_ENV` 来选择 `config/{AGENT_ENV}.yaml`，从同名 `*.example.yaml` 复制生成实际配置文件；实际 YAML 含数据库密码或 API token 时不得提交。并说明 dev/prod 架构：
 
 ```text
 FastAPI → 127.0.0.1:5432 → Cloud SQL Auth Proxy → IAM Auth → Cloud SQL PostgreSQL
@@ -441,7 +441,7 @@ tests/test_conversation_api.py
 tests/test_agent_service.py
 ```
 
-覆盖：YAML 按 `APP_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、MCP 重启后的断连标记与下一次调用重连、只读 Tool 单次重试、写 Tool 不自动重试、MCP schema 后继续交互、Mock `create_ticket`、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 时 mock Agent / MCP。
+覆盖：YAML 按 `AGENT_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、MCP 重启后的断连标记与下一次调用重连、只读 Tool 单次重试、写 Tool 不自动重试、MCP schema 后继续交互、Mock `create_ticket`、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 时 mock Agent / MCP。
 
 ## 18. 编码约束
 

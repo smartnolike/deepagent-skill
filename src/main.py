@@ -20,6 +20,7 @@ from src.core.errors import DomainError
 from src.common.httpx_client import HttpxClient
 from src.core.logging import configure_logging
 from src.core.request_context import request_id_var
+from src.core.startup_secrets import resolve_runtime_secrets
 from src.database.engine import create_engine
 from src.mcp.manager import McpClientManager
 from src.services.memory_service import MemoryService
@@ -36,6 +37,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         # 延迟到服务实际启动时读取 YAML，避免模块导入或测试依赖本机私密环境变量。
         runtime_settings = configured_settings or load_settings()
         configure_logging(runtime_settings)
+        app.state.runtime_secrets = await resolve_runtime_secrets(runtime_settings)
         engine = create_async_engine(database_url, pool_pre_ping=True) if database_url else create_engine(runtime_settings)
         app.state.settings = runtime_settings
         app.state.ready = False
@@ -61,6 +63,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         runtime_settings,
                         app.state.mcp_manager,
                         app.state.memory_service,
+                        app.state.runtime_secrets,
                         app.state.httpx_client,
                         checkpointer,
                         app.state.session_factory,
@@ -84,6 +87,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 runtime_settings,
                 app.state.mcp_manager,
                 app.state.memory_service,
+                app.state.runtime_secrets,
                 app.state.httpx_client,
                 session_factory=app.state.session_factory,
             )
