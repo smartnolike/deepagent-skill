@@ -4,7 +4,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from src.api.memory_request import MemoryRequest
+from src.api.schemas.memory import MemoryRequest
 from src.core.auth import require_api_token
 from src.services.memory_service import MemoryService
 

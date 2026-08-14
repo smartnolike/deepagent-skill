@@ -81,7 +81,8 @@ src/
 ├── services/conversation_service.py
 ├── agent/{factory.py,checkpointer.py,service.py}
 ├── mcp/{client.py,manager.py,tools.py}
-└── skills/ticket-request/SKILL.md
+skill-packages/
+└── ticket-request/SKILL.md
 alembic/
 config/{local,dev,prod}.example.yaml
 tests/
@@ -137,15 +138,15 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 实现以下接口：
 
 ```text
-POST   /api/conversations
-GET    /api/conversations?staff_id={staff_id}&page=1&page_size=20
-GET    /api/conversations/{conversation_id}
-DELETE /api/conversations/{conversation_id}
-GET    /api/conversations/{conversation_id}/messages
-POST   /api/conversations/{conversation_id}/messages
+POST   /agent/api/conversations
+GET    /agent/api/conversations?staff_id={staff_id}&page=1&page_size=20
+GET    /agent/api/conversations/{conversation_id}
+DELETE /agent/api/conversations/{conversation_id}
+GET    /agent/api/conversations/{conversation_id}/messages
+POST   /agent/api/conversations/{conversation_id}/messages
 ```
 
-所有 `/api/*` 端点都必须通过 `src/core/auth.py` 中名为 `require_api_token` 的 Auth dependency 鉴权。MVP 的 Auth 方法从 `Authorization: Bearer <token>` 读取 token，并以 `secrets.compare_digest` 与 `Settings.api_auth_token.get_secret_value()` 做常量时间比较；缺失或不匹配时返回统一的 `401` API error。该静态 token 只负责访问控制，不作为用户身份来源。
+所有 `/agent/api/*` 端点都必须通过 `src/core/auth.py` 中名为 `require_api_token` 的 Auth dependency 鉴权。MVP 的 Auth 方法从 `Authorization: Bearer <token>` 读取 token，并以 `secrets.compare_digest` 与 `Settings.api_auth_token.get_secret_value()` 做常量时间比较；缺失或不匹配时返回统一的 `401` API error。该静态 token 只负责访问控制，不作为用户身份来源。
 
 会话归属使用调用方显式提供的 `staff_id`：创建会话和发送消息请求体必须含 `staff_id`；列表、读取、删除和读取消息接口以必填 query parameter `staff_id` 接收它。列表接口还必须支持 `page`（默认 `1`，最小 `1`）与 `page_size`（默认 `20`，范围 `1`–`100`），并返回 `{items, page, page_size, total}`。所有接口均须校验其与 conversation 中保存的 `staff_id` 一致，不一致时返回 `403`。创建会话至少返回：
 
@@ -157,7 +158,7 @@ POST   /api/conversations/{conversation_id}/messages
 
 ## 9. 消息处理流程
 
-`POST /api/conversations/{conversation_id}/messages` 收到例如 `{"staff_id":"staff-123","content":"我要申请一个 bucket"}` 后必须：
+`POST /agent/api/conversations/{conversation_id}/messages` 收到例如 `{"staff_id":"staff-123","content":"我要申请一个 bucket"}` 后必须：
 
 1. 通过静态 token 鉴权，并校验 conversation 存在且归属该 `staff_id`；
 2. 保存 user message；
@@ -216,11 +217,11 @@ data: {...}
 config = {"configurable": {"thread_id": str(conversation_id)}}
 ```
 
-页面重开通过 `GET /api/conversations/{id}/messages` 恢复可见历史；再次发消息则由 checkpoint 恢复 Agent 上下文。
+页面重开通过 `GET /agent/api/conversations/{id}/messages` 恢复可见历史；再次发消息则由 checkpoint 恢复 Agent 上下文。
 
 ## 13. Ticket Request Skill
 
-创建 `skills/ticket-request/SKILL.md`，用于资源申请：
+创建 `skill-packages/ticket-request/SKILL.md`，用于资源申请：
 
 ```text
 用户提出资源申请
@@ -306,21 +307,86 @@ create_ticket(resource_type, parameters)
 
 `validate_ticket_params` 返回 `valid`、`missing`、`errors`；`create_ticket` 只能在 validation 成功后调用，示例返回 `{"ticket_id":"REQ-10001","status":"created"}`。`mock` transport 用于 local 与测试，可为一个或多个 server 提供独立的 Fake implementation；测试不得依赖真实 MCP Server。
 
+### 用户确认型 MCP Tool
+
+有副作用的 Tool 可在所属 `McpServerSettings.confirmation_required_tools` 中声明，且必须同时存在于该 server 的
+`tools` allowlist。例如 `confirmation_required_tools: [create_ticket]` 会生成 `ticketing__create_ticket` 的
+DeepAgents `interrupt_on` 规则。Agent 在调用前暂停，Tool 尚未实际执行，API SSE 返回：
+
+```text
+event: confirmation_required
+data: {"tool_name":"ticketing__create_ticket", "description":"Confirm ticket creation"}
+```
+
+只有 conversation 所属的 `staff_id` 可以调用
+`POST /agent/api/conversations/{conversation_id}/tool-confirmations`。`action: approve` 用同一
+`thread_id = conversation_id` 恢复 checkpoint 并执行 Tool；`action: reject` 用 LangGraph HITL reject 决策恢复，
+Tool 不执行，Agent 自然回复已取消。用户关闭页面时运行状态保持 `awaiting_confirmation`，之后可继续操作。
+这不是多人审批：不引入审批人、转交或审批流；当前 MVP 每次只允许一个等待确认的 Tool 调用。
+
+### Danaan Cloud Resource
+
+`skill-packages/danaan-cloud-resource/SKILL.md` 负责 Danaan Cloud Storage、BigQuery 和 Cloud SQL 创建申请。它读取 staff scoped memory 中的
+`danaan-cloud-resource:base-context`，但必须先通过 `request_user_form` 让用户确认沿用或重新选择
+`resourceOnboardRegion`、`applicationName`、`eimId`、`envName`、`useCaseShortName`；长期记忆绝不能静默
+覆盖本轮用户输入。`request_user_form` 使用 HITL `respond` 决策暂停，并映射为：
+
+```text
+event: form_required
+data: {"form_name":"...", "title":"...", "fields":[...], "prefilled_values":{...}}
+```
+
+前端以 `POST /agent/api/conversations/{conversation_id}/tool-confirmations`、`action: respond` 与 JSON object
+`response` 恢复同一线程。表单 Tool 只传递 UI 定义，不承担参数校验或记忆写入。
+
+模板读取由应用内 `danaan_get_resource_template(resource_name)` 完成，而非 MCP。它为每次 Tool 调用新建
+独立 SQLAlchemy Session，并通过独立的 `CloudResourceTemplateInfo` SQLAlchemy Model 查询 Danaan 管理的
+`public.cloud_resource_template_info`：按 `cloud_resource_name = :resource_name` 过滤，并按
+`req_time DESC NULLS LAST, res_template_id DESC` 取最新 `template_content`。该外部表不能写入 ORM model 或
+Alembic migration；部署数据库账号需要最小化的 `SELECT` 权限。查询无结果时 Skill 必须停止创建流程并告知用户。
+最终申请调用 `danaan__external_resource_add`，它必须配置为 confirmation-required，只有用户 `approve` 后执行。
+
 ## Harness 与 Skill 扩展
 
 生产路径只有一个 root DeepAgent：Agent Factory 从 YAML `agent.model`、`agent.skills_dir` 和 `agent.enabled_skills` 创建它，注册全部 MCP allowlisted tools，并使用 PostgreSQL checkpointer。每个 Skill 都是独立目录中的 `SKILL.md`；Agent 根据用户问题自行选择适用 Skill。`FilesystemBackend` 的 root 必须是 `agent.skills_dir`，并用 filesystem permission 禁止所有 write；Agent 只能读取/搜索 Skill 文件，不能浏览项目源码、YAML、迁移或写入宿主文件系统。新增业务能力时优先新增 Skill、配置其 MCP server/tool allowlist 并补充测试，不要增加新的 Agent、Router 分支或 Python 关键字意图路由。
 
 未设置 `agent.model` 的 local/test 环境允许启用 deterministic Mock harness，只用于验证 API、会话、SSE 和 Mock MCP；它不是生产 Agent 实现。真实模型凭据通过 YAML 的 `${ENV_VAR}` 引用注入，绝不写入仓库、日志或 API 响应。
 
+模型来源由 `agent.provider` 明确选择：`internal` 代表公司内部 OpenAI-compatible 网关，必须配置
+`agent.base_url` 与 `agent.token_auth`；`openai` 代表 OpenAI 官方外部模型，必须配置固定
+`agent.api_key`，且禁止 `base_url` 与 `token_auth`；`openai_compatible` 代表 DeepSeek 等兼容 OpenAI 协议的
+外部模型，必须配置固定 `agent.api_key` 与 `agent.base_url`，且禁止 `token_auth`。内部 Token 配置包含 `translator_url`、`service_account`、
+`service_account_password`、`refresh_before_expiry_seconds`（30 秒 Token 推荐为 5）和 `request_timeout_seconds`。
+Agent Factory 仅对 internal Provider 使用 `ChatOpenAI(api_key=token_provider.get_token)`：每一条新的
+模型 HTTP 请求建立前，Token Provider 才按需请求或复用 Token；已建立的 SSE 流不再续期或重复校验 Token。默认
+translator request 为 `{"service_account":"...","service_account_password":"..."}`，response 为
+`{"access_token":"...","expires_in":30}`；不同字段名可通过 `token_field` 与 `expires_in_field` 配置。
+Token Provider 以单锁去重并缓存至临近过期，Token、密码和 HTTP body 禁止进入日志。
+
 ## 自定义 Tool 与外部 HTTP
 
-应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
+应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或 dynamic model token 时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
 
 ## 长期记忆
 
 LangGraph checkpointer 只保存单个 `conversation_id` 的会话与 Agent 状态，长期记忆使用独立的 `AsyncPostgresStore`，但可连接同一个 PostgreSQL。memory namespace 固定为 `("staff", staff_id, "memory")`，以确保不同员工永不共享记忆。每次真实 Agent 调用前，从该 namespace 读取最多 100 条显式保存的 memory，作为只读 `context.memories` 注入运行时上下文。
 
-MVP 只支持显式 API 管理记忆：`PUT /api/memories/{key}`、`GET /api/memories?staff_id=...`、`DELETE /api/memories/{key}?staff_id=...`。memory value 只允许字符串字段；不得自动提炼所有聊天内容，也不得保存 password、token、Authorization、完整工单内容或敏感 MCP 输出。后续若启用自动提炼，必须经独立 MemoryService 的敏感字段过滤、明确同意策略和审计。
+MVP 只支持显式 API 管理记忆：`PUT /agent/api/memories/{key}`、`GET /agent/api/memories?staff_id=...`、`DELETE /agent/api/memories/{key}?staff_id=...`。memory value 只允许字符串字段；不得自动提炼所有聊天内容，也不得保存 password、token、Authorization、完整工单内容或敏感 MCP 输出。后续若启用自动提炼，必须经独立 MemoryService 的敏感字段过滤、明确同意策略和审计。
+
+`danaan-base-context` 是受控例外：用户提交 Danaan 基础资料表单即确认保存。后端仅提取
+`resourceOnboardRegion`、`applicationName`、`eimId`、`envName`、`useCaseShortName`，以 key
+`danaan-cloud-resource:base-context` 写入 `("staff", staff_id, "memory")` namespace。Harness 每次调用时
+必须通过 exact key 读取该值为 `context.danaan_base_context`，不能依赖模型从全部 memory 列表中猜测；再次使用前
+仍需用户确认。
+
+## 响应语言
+
+每次用户消息独立决定 **Agent 自然语言回复**：只要 `content` 包含任意中文字符，DeepAgent 和 Mock fallback 均以中文为主；完全不含中文时以英文为主。Ticket ID、字段名、枚举值、Tool 名、URL、代码、产品名和 error code 不翻译。API JSON、认证、校验、SSE `error` 事件和其他系统固定文案始终使用英文。不要翻译已存储的历史消息。
+
+`agent.system_prompt` 必须声明 Skill 文档、Tool 描述、memory、示例和历史消息的语言不能决定 Agent 回复语言。
+`ResponseLanguageMiddleware` 在每次模型调用前从 runtime `response_language` 临时附加权威指令，覆盖 Tool
+调用与 LangGraph checkpoint 恢复；该指令不得写入可见聊天记录或 checkpoint 消息。前端 UI、表单字段、SSE
+协议事件、确认按钮和 API 系统文案始终使用英文，只有 Agent 的自然语言 token 与最终 Markdown 确认摘要使用动态语言。
 
 ## 15. Repository / Service 分层与错误处理
 

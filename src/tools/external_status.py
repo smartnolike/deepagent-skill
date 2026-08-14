@@ -4,9 +4,9 @@
 
 import json
 
-from src.core.http_client import ExternalHttpClient
+from src.common.httpx_client import HttpxClient
 
 
-async def get_configured_service_status(client: ExternalHttpClient, url: str) -> str:
+async def get_configured_service_status(client: HttpxClient, url: str) -> str:
     """调用 YAML 指定的状态接口并返回 JSON 字符串。"""
     return json.dumps(await client.get_json(url), ensure_ascii=False)

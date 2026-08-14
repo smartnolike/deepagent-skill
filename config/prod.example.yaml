@@ -1,8 +1,16 @@
 app_env: prod
 agent:
+  provider: internal
   model: openai:gpt-5.5
-  skills_dir: src/skills
-  enabled_skills: [ticket-request]
+  base_url: ${MODEL_BASE_URL}
+  token_auth:
+    translator_url: ${TRANSLATOR_URL}
+    service_account: ${SERVICE_ACCOUNT}
+    service_account_password: ${SERVICE_ACCOUNT_PASSWORD}
+    refresh_before_expiry_seconds: 5
+    request_timeout_seconds: 3
+  skills_dir: skill-packages
+  enabled_skills: [ticket-request, danaan-cloud-resource]
 database:
   host: 127.0.0.1
   port: 5432
@@ -16,6 +24,7 @@ tools:
   root_ca_path: build/root.cer
 mcp_servers:
   ticketing:
+    enabled: true
     transport: http
     url: https://mcp.example.internal/ticketing
     headers:
@@ -24,3 +33,15 @@ mcp_servers:
     reconnect_initial_delay_seconds: 1
     reconnect_max_delay_seconds: 30
     tools: [get_resource_schema, validate_ticket_params, create_ticket]
+    confirmation_required_tools: [create_ticket]
+  danaan:
+    enabled: true
+    transport: http
+    url: ${DANAAN_MCP_URL}
+    headers:
+      Authorization: Bearer ${DANAAN_MCP_TOKEN}
+    timeout_seconds: 15
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [external_resource_add]
+    confirmation_required_tools: [external_resource_add]

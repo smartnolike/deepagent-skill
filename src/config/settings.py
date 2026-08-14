@@ -5,7 +5,7 @@
 from typing import Literal
 from urllib.parse import quote_plus
 
-from pydantic import SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent_settings import AgentSettings
@@ -24,14 +24,31 @@ class Settings(BaseSettings):
     tools: ToolSettings = ToolSettings()
     database: DatabaseSettings
     api_auth_token: SecretStr
-    mcp_servers: dict[str, McpServerSettings]
+    mcp_servers: dict[str, McpServerSettings] = Field(default_factory=dict)
     log_level: str = "INFO"
     log_format: Literal["json", "text"] = "json"
+    allow_test_doubles: bool = False
+
+    @field_validator("mcp_servers", mode="before")
+    @classmethod
+    def normalize_empty_mcp_servers(cls, value: object) -> object:
+        """允许 YAML 的 ``mcp_servers:`` 空值表示没有启用 MCP。"""
+        return {} if value is None else value
 
     @model_validator(mode="after")
     def validate_database_auth(self) -> "Settings":
         if self.app_env == "local" and not self.database.password:
             raise ValueError("database.password is required for local")
+        if not self.allow_test_doubles and self.agent.model is None:
+            raise ValueError("agent.model is required outside the test-double runtime")
+        if not self.allow_test_doubles:
+            mock_servers = [
+                server_id
+                for server_id, server in self.mcp_servers.items()
+                if server.enabled and server.transport == "mock"
+            ]
+            if mock_servers:
+                raise ValueError(f"mock MCP servers are only allowed in tests: {', '.join(mock_servers)}")
         return self
 
     @property

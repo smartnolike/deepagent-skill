@@ -3,13 +3,7 @@ __pycache__/
 *.py[codz]
 *$py.class
 
-# C extensions
-*.so
-
-# Distribution / packaging
 .Python
-build/
-develop-eggs/
 dist/
 downloads/
 eggs/
@@ -125,27 +119,6 @@ ipython_config.py
 .pixi
 
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
-__pypackages__/
-
-# Celery stuff
-celerybeat-schedule
-celerybeat.pid
-
-# Redis
-*.rdb
-*.aof
-*.pid
-
-# RabbitMQ
-mnesia/
-rabbitmq/
-rabbitmq-data/
-
-# ActiveMQ
-activemq-data/
-
-# SageMath parsed files
-*.sage.py
 
 # Environments
 .env
@@ -218,13 +191,6 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
-# Local environment overrides; commit .env.example instead.
-.env.local
-.env.*.local
-
-# Per-environment runtime configuration; keep checked-in templates only.
-config/*.yaml
-!config/*.example.yaml
 
 # Ruff stuff:
 .ruff_cache/

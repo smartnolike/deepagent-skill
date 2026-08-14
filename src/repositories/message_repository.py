@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.message import Message
+from src.database.models.agent.message import Message
 
 
 class MessageRepository:

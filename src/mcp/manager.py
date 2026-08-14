@@ -22,20 +22,25 @@ class McpClientManager:
 
     @property
     def server_settings(self):
-        """Return configured MCP server settings for tool registration."""
-        return self._settings.mcp_servers
+        """返回启用的 MCP Server；禁用项不会连接或暴露 Tool。"""
+        return {
+            server_id: server
+            for server_id, server in self._settings.mcp_servers.items()
+            if server.enabled
+        }
 
     async def start(self) -> None:
-        """Initialize mock clients; remote transports connect lazily on first tool use."""
-        for server_id, server in self._settings.mcp_servers.items():
-            if server.transport == "mock":
-                self._clients[server_id] = MockMcpClient()
+        """启动时连接全部 MCP，确保应用只有在依赖服务就绪后才开始接流量。"""
+        for server_id, server in self.server_settings.items():
             self._locks[server_id] = asyncio.Lock()
+            if server.transport == "mock" and not self._settings.allow_test_doubles:
+                raise RuntimeError(f"Mock MCP is not allowed outside tests: {server_id}")
+            await self._get_client(server_id)
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call a configured, namespaced tool and reconnect the server if needed."""
         server_id, tool_name = qualified_name.split("__", maxsplit=1)
-        server = self._settings.mcp_servers.get(server_id)
+        server = self.server_settings.get(server_id)
         if not server or tool_name not in server.tools:
             self._logger.warning("mcp_tool_rejected server_id=%s tool_name=%s", server_id, tool_name)
             raise RuntimeError("MCP_UNAVAILABLE")
@@ -68,7 +73,7 @@ class McpClientManager:
             return client
         async with self._locks[server_id]:
             if server_id not in self._clients:
-                server = self._settings.mcp_servers[server_id]
+                server = self.server_settings[server_id]
                 if server.transport == "mock":
                     self._clients[server_id] = MockMcpClient()
                 elif server.transport == "http":

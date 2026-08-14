@@ -17,7 +17,7 @@ from src.api.router import router
 from src.config.load_settings import load_settings
 from src.config.settings import Settings
 from src.core.errors import DomainError
-from src.core.http_client import ExternalHttpClient
+from src.common.httpx_client import HttpxClient
 from src.core.logging import configure_logging
 from src.core.request_context import request_id_var
 from src.database.engine import create_engine
@@ -29,21 +29,24 @@ logger = logging.getLogger(__name__)
 
 def create_app(settings: Settings | None = None, database_url: str | None = None) -> FastAPI:
     """Create an application with resources owned by its lifespan."""
-    runtime_settings = settings or load_settings()
+    configured_settings = settings
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
+        # 延迟到服务实际启动时读取 YAML，避免模块导入或测试依赖本机私密环境变量。
+        runtime_settings = configured_settings or load_settings()
         configure_logging(runtime_settings)
         engine = create_async_engine(database_url, pool_pre_ping=True) if database_url else create_engine(runtime_settings)
         app.state.settings = runtime_settings
+        app.state.ready = False
         app.state.engine = engine
         app.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
         app.state.mcp_manager = McpClientManager(runtime_settings)
         await app.state.mcp_manager.start()
-        app.state.external_http_client = None
-        if runtime_settings.tools.external_status_url is not None:
-            app.state.external_http_client = ExternalHttpClient(runtime_settings.tools.root_ca_path)
-            logger.info("external_http_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
+        app.state.httpx_client = None
+        if runtime_settings.tools.external_status_url is not None or runtime_settings.agent.token_auth is not None:
+            app.state.httpx_client = HttpxClient(runtime_settings.tools.root_ca_path)
+            logger.info("httpx_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
         logger.info("application_resources_initializing env=%s", runtime_settings.app_env)
         if database_url is None:
             async with create_checkpointer_context(runtime_settings) as checkpointer:
@@ -58,15 +61,18 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         runtime_settings,
                         app.state.mcp_manager,
                         app.state.memory_service,
-                        app.state.external_http_client,
+                        app.state.httpx_client,
                         checkpointer,
+                        app.state.session_factory,
                     )
                     logger.info("application_resources_ready persistence=postgres")
+                    app.state.ready = True
                     try:
                         yield
                     finally:
-                        if app.state.external_http_client is not None:
-                            await app.state.external_http_client.close()
+                        app.state.ready = False
+                        if app.state.httpx_client is not None:
+                            await app.state.httpx_client.close()
                         await app.state.mcp_manager.close()
                         await engine.dispose()
         else:
@@ -78,19 +84,29 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 runtime_settings,
                 app.state.mcp_manager,
                 app.state.memory_service,
-                app.state.external_http_client,
+                app.state.httpx_client,
+                session_factory=app.state.session_factory,
             )
             logger.info("application_resources_ready persistence=in_memory")
+            app.state.ready = True
             try:
                 yield
             finally:
-                if app.state.external_http_client is not None:
-                    await app.state.external_http_client.close()
+                app.state.ready = False
+                if app.state.httpx_client is not None:
+                    await app.state.httpx_client.close()
                 await app.state.mcp_manager.close()
                 await engine.dispose()
 
     app = FastAPI(title="DeepAgent Platform MVP", lifespan=lifespan)
     app.include_router(router)
+
+    @app.get("/health", include_in_schema=False)
+    async def health(request: Request) -> JSONResponse:
+        """返回资源是否已完成初始化；此探针接口不需要认证。"""
+        if not request.app.state.ready:
+            return JSONResponse(status_code=503, content={"status": "not_ready"})
+        return JSONResponse(content={"status": "ok"})
 
     @app.exception_handler(DomainError)
     async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:

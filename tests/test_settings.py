@@ -12,27 +12,41 @@ from src.config.settings import Settings
 def test_local_requires_password() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
-            {"app_env": "local", "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+            {"app_env": "local", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
         )
 
 
 def test_dev_allows_no_password() -> None:
     settings = Settings.model_validate(
-        {"app_env": "dev", "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        {"app_env": "dev", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
     )
     assert settings.database.password is None
 
 
-def test_agent_skill_configuration_defaults_to_mock_harness() -> None:
+def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None:
     settings = Settings.model_validate(
-        {"app_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        {
+            "app_env": "local",
+            "allow_test_doubles": True,
+            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": None,
+        }
     )
-    assert settings.agent.model is None
+    assert settings.mcp_servers == {}
+
+
+def test_real_runtime_requires_agent_model() -> None:
+    with pytest.raises(ValidationError, match="agent.model"):
+        Settings.model_validate(
+            {"app_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        )
 
 
 def test_yaml_expands_environment_references(tmp_path, monkeypatch) -> None:
     (tmp_path / "local.yaml").write_text(
         """app_env: local
+allow_test_doubles: true
 database: {host: localhost, name: deepagent, user: postgres, password: "${DB_PASSWORD}"}
 api_auth_token: "${API_TOKEN:-fallback-token}"
 mcp_servers:
@@ -49,3 +63,58 @@ mcp_servers:
     settings = load_settings(tmp_path)
     assert settings.api_auth_token.get_secret_value() == "fallback-token"
     assert settings.mcp_servers["ticketing"].headers["Authorization"] == "Bearer mcp-secret"
+
+
+def test_dynamic_token_auth_requires_model_base_url() -> None:
+    with pytest.raises(ValidationError, match="agent.base_url"):
+        Settings.model_validate(
+            {
+                "app_env": "local",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "agent": {
+                    "token_auth": {
+                        "translator_url": "https://translator.example/token",
+                        "service_account": "svc",
+                        "service_account_password": "secret",
+                    }
+                },
+            }
+        )
+
+
+def test_openai_provider_rejects_internal_token_auth() -> None:
+    with pytest.raises(ValidationError, match="agent.token_auth"):
+        Settings.model_validate(
+            {
+                "app_env": "local",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "agent": {
+                    "provider": "openai",
+                    "token_auth": {
+                        "translator_url": "https://translator.example/token",
+                        "service_account": "svc",
+                        "service_account_password": "secret",
+                    },
+                },
+            }
+        )
+
+
+def test_openai_compatible_provider_requires_base_url() -> None:
+    with pytest.raises(ValidationError, match="agent.base_url"):
+        Settings.model_validate(
+            {
+                "app_env": "local",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "agent": {"provider": "openai_compatible", "api_key": "test-key"},
+            }
+        )

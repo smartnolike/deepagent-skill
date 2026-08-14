@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.agent_run import AgentRun
+from src.database.models.agent.agent_run import AgentRun
 
 
 class AgentRunRepository:
@@ -30,3 +30,18 @@ class AgentRunRepository:
         run.status = "failed"
         run.error_message = error_message[:1000]
         await self._session.commit()
+
+    async def await_confirmation(self, run: AgentRun) -> None:
+        """标记运行已由用户确认型 Tool 暂停。"""
+        run.status = "awaiting_confirmation"
+        await self._session.commit()
+
+    async def get_awaiting_confirmation(self, conversation_id: uuid.UUID) -> AgentRun | None:
+        """返回会话中唯一等待用户确认的运行。"""
+        from sqlalchemy import select
+
+        return await self._session.scalar(
+            select(AgentRun)
+            .where(AgentRun.conversation_id == conversation_id, AgentRun.status == "awaiting_confirmation")
+            .order_by(AgentRun.created_at.desc())
+        )

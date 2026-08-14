@@ -17,12 +17,14 @@ def client(tmp_path):
     settings = Settings.model_validate(
         {
             "app_env": "local",
+            "allow_test_doubles": True,
             "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
             "api_auth_token": "test-token",
             "mcp_servers": {
                 "ticketing": {
                     "transport": "mock",
                     "tools": ["get_resource_schema", "validate_ticket_params", "create_ticket"],
+                    "confirmation_required_tools": ["create_ticket"],
                 }
             },
         }

@@ -11,7 +11,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 
-class ExternalHttpClient:
+class HttpxClient:
     """受控的外部 API HTTP 客户端。"""
 
     def __init__(self, root_ca_path: Path, transport: httpx.AsyncBaseTransport | None = None) -> None:
@@ -41,6 +41,24 @@ class ExternalHttpClient:
             (time.perf_counter() - started) * 1000,
         )
         return payload
+
+    async def post_json(
+        self, url: str, payload: dict[str, str], timeout_seconds: float
+    ) -> dict[str, object]:
+        """执行 JSON POST；日志不记录请求 payload、header 或响应正文。"""
+        started = time.perf_counter()
+        response = await self._client.post(url, json=payload, timeout=timeout_seconds)
+        response.raise_for_status()
+        result = response.json()
+        if not isinstance(result, dict):
+            raise ValueError("External API response must be a JSON object")
+        logger.info(
+            "external_http_completed host=%s status_code=%s duration_ms=%d",
+            response.url.host,
+            response.status_code,
+            (time.perf_counter() - started) * 1000,
+        )
+        return result
 
     async def close(self) -> None:
         """在应用关闭时释放 HTTP 连接池。"""

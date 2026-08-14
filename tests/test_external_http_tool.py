@@ -7,14 +7,15 @@ import shutil
 import certifi
 import httpx
 
-from src.core.http_client import ExternalHttpClient
+from src.common.httpx_client import HttpxClient
+from src.tools.echo import echo_text
 from src.tools.external_status import get_configured_service_status
 
 
 async def test_external_status_tool_uses_custom_ca_and_mock_transport(tmp_path) -> None:
     certificate = tmp_path / "root.cer"
     shutil.copyfile(certifi.where(), certificate)
-    client = ExternalHttpClient(
+    client = HttpxClient(
         certificate,
         transport=httpx.MockTransport(lambda _: httpx.Response(200, json={"status": "ok"})),
     )
@@ -24,12 +25,16 @@ async def test_external_status_tool_uses_custom_ca_and_mock_transport(tmp_path) 
         await client.close()
 
 
-def test_external_http_client_rejects_empty_certificate(tmp_path) -> None:
+def test_httpx_client_rejects_empty_certificate(tmp_path) -> None:
     certificate = tmp_path / "root.cer"
     certificate.touch()
     try:
-        ExternalHttpClient(certificate)
+        HttpxClient(certificate)
     except RuntimeError as error:
         assert "missing or empty" in str(error)
     else:
         raise AssertionError("Empty root certificate must be rejected")
+
+
+async def test_echo_text_tool_returns_its_input() -> None:
+    assert await echo_text.ainvoke({"text": "你好，DeepAgent"}) == "你好，DeepAgent"

@@ -1,0 +1,55 @@
+:root {
+  color: #182230;
+  background: #f4f7fb;
+  font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+
+.application-shell { height: 100vh; }
+.conversation-panel { display: flex; flex-direction: column; padding: 18px 14px; background: #fff; border-right: 1px solid #e8edf3; }
+.brand { margin: 0 10px 22px; color: #1b4a91; font-size: 18px; font-weight: 700; }
+.new-chat { margin: 0 4px 14px; }
+.conversation-list { flex: 1; }
+.conversation-item { display: block; width: 100%; margin: 2px 0; padding: 11px 12px; overflow: hidden; color: #536273; text-align: left; text-overflow: ellipsis; white-space: nowrap; background: transparent; border: 0; border-radius: 8px; cursor: pointer; }
+.conversation-item:hover, .conversation-item.active { color: #1b4a91; background: #edf4ff; }
+.chat-panel { display: flex; flex-direction: column; min-width: 0; padding: 0; }
+.chat-header { display: flex; align-items: center; height: 68px; padding: 0 32px; background: rgba(255, 255, 255, .85); border-bottom: 1px solid #e8edf3; }
+.chat-header strong { display: block; }
+.chat-header span { color: #8b98a8; font-size: 12px; }
+.message-area { flex: 1; min-height: 0; padding: 24px clamp(16px, 6vw, 110px); overflow: hidden; }
+.bubble-list { height: 100%; }
+.agent-thinking { margin: 0 0 8px; }
+.plain-message { white-space: pre-wrap; }
+.assistant-markdown { line-height: 1.7; }
+.assistant-markdown p:first-child { margin-top: 0; }
+.assistant-markdown p:last-child { margin-bottom: 0; }
+.assistant-markdown pre { overflow-x: auto; padding: 12px; border-radius: 8px; background: #172033; }
+.assistant-streaming-code {
+  overflow-x: auto;
+  margin: 0;
+  padding: 12px;
+  color: #e6edf7;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border-radius: 8px;
+  background: #172033;
+}
+.sender-area { padding: 14px clamp(16px, 6vw, 110px) 28px; background: #fff; border-top: 1px solid #e8edf3; }
+.confirmation-card { display: flex; align-items: center; justify-content: space-between; gap: 18px; margin: 0 clamp(16px, 6vw, 110px) 8px; padding: 14px 18px; background: #fff9e7; border: 1px solid #f6d98d; border-radius: 10px; }
+.confirmation-card p { margin: 5px 0 0; color: #7a5b12; font-size: 13px; }
+.resource-form-card { margin: 0 clamp(16px, 6vw, 110px) 8px; padding: 18px; background: #fff; border: 1px solid #cfe0f7; border-radius: 10px; box-shadow: 0 4px 18px rgba(42, 81, 135, .08); }
+.resource-form-header { margin-bottom: 14px; }
+.resource-form-header p { margin: 5px 0 0; color: #697789; font-size: 13px; }
+.danaan-profile-table { width: 100%; margin-bottom: 16px; }
+.resource-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; }
+.resource-form-grid .el-form-item { margin-bottom: 12px; }
+.resource-form-actions { display: flex; justify-content: flex-end; }
+
+@media (max-width: 720px) {
+  .conversation-panel { display: none; }
+  .confirmation-card { align-items: flex-start; flex-direction: column; }
+  .resource-form-grid { grid-template-columns: 1fr; }
+}

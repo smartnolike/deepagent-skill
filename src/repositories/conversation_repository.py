@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.conversation import Conversation
+from src.database.models.agent.conversation import Conversation
 
 
 class ConversationRepository:
@@ -41,3 +41,10 @@ class ConversationRepository:
     async def delete(self, conversation: Conversation) -> None:
         await self._session.delete(conversation)
         await self._session.commit()
+
+    async def update_title(self, conversation: Conversation, title: str | None) -> Conversation:
+        """Persist a conversation title change and refresh its updated timestamp."""
+        conversation.title = title
+        await self._session.commit()
+        await self._session.refresh(conversation)
+        return conversation

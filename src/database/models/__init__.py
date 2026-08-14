@@ -2,8 +2,8 @@
 
 # 集中导入确保 Alembic 可以发现全部业务模型的 metadata。
 
-from .agent_run import AgentRun
-from .conversation import Conversation
-from .message import Message
+from .agent.agent_run import AgentRun
+from .agent.conversation import Conversation
+from .agent.message import Message
 
 __all__ = ["AgentRun", "Conversation", "Message"]

@@ -26,6 +26,19 @@ class MemoryService:
         logger.info("memory_listed staff_id=%s count=%s", staff_id, len(items))
         return [{"key": item.key, "value": item.value} for item in items]
 
+    async def get(self, staff_id: str, key: str) -> dict[str, str] | None:
+        """Load one exact staff-scoped memory key without exposing unrelated entries."""
+        item = await self._store.aget(self._namespace(staff_id), key)
+        if item is None:
+            logger.info("memory_not_found staff_id=%s memory_key=%s", staff_id, key)
+            return None
+        value = item.value
+        if not isinstance(value, dict) or not all(isinstance(item_value, str) for item_value in value.values()):
+            logger.warning("memory_ignored_invalid_value staff_id=%s memory_key=%s", staff_id, key)
+            return None
+        logger.info("memory_loaded staff_id=%s memory_key=%s", staff_id, key)
+        return dict(value)
+
     async def delete(self, staff_id: str, key: str) -> None:
         """Delete one memory in the current staff namespace."""
         await self._store.adelete(self._namespace(staff_id), key)

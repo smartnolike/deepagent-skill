@@ -1,0 +1,46 @@
+app_env: local
+agent:
+  provider: openai_compatible
+  model: deepseek-v4-flash
+  # DeepSeek 使用 OpenAI-compatible API；启动前设置 DEEPSEEK_API_KEY。
+  base_url: https://api.deepseek.com
+  api_key: ${DEEPSEEK_API_KEY}
+  #
+  # ===== 公司内部模型切换模板（保持注释，按块替换上面的 provider/model/base_url/api_key）=====
+  # provider: internal
+  # model: openai:internal-model-name
+  # base_url: ${MODEL_BASE_URL:-http://127.0.0.1:8080/v1}
+  # 不配置 api_key；内部网关通过 translator 获取短期 Token。
+  # token_auth:
+  #   translator_url: ${TRANSLATOR_URL:-http://127.0.0.1:8081/token}
+  #   service_account: ${SERVICE_ACCOUNT:-local-service-account}
+  #   service_account_password: ${SERVICE_ACCOUNT_PASSWORD:-change-me}
+  #   refresh_before_expiry_seconds: 5
+  #   request_timeout_seconds: 3
+  skills_dir: skill-packages
+  enabled_skills: [danaan-cloud-resource]
+database:
+  host: localhost
+  port: 5432
+  name: postgres
+  user: postgres
+  password: postgres
+api_auth_token: change-me
+log_level: INFO
+log_format: text
+tools:
+  external_status_url: null
+  root_ca_path: build/root.cer
+mcp_servers:
+  danaan:
+    # 本地未部署 Danaan MCP 时保持 false；改为 true 后才会连接并注册其 Tool。
+    enabled: false
+    transport: http
+    url: ${DANAAN_MCP_URL:-https://mcp.example.internal/danaan}
+    headers:
+      Authorization: Bearer ${DANAAN_MCP_TOKEN:-change-me}
+    timeout_seconds: 15
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [external_resource_add]
+    confirmation_required_tools: [external_resource_add]

@@ -7,6 +7,6 @@ from fastapi import APIRouter
 from .conversations import router as conversations_router
 from .memories import router as memories_router
 
-router = APIRouter()
+router = APIRouter(prefix="/agent")
 router.include_router(conversations_router)
 router.include_router(memories_router)
