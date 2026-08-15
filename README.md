@@ -22,7 +22,9 @@ alembic upgrade head
 uvicorn src.main:app --reload
 ```
 
-`GET /health` 不需要认证，并仅在模型、PostgreSQL 与全部 MCP 已就绪后返回 `{"status":"ok"}`。
+`GET /health` 不需要认证，并在应用、PostgreSQL、Checkpointer 与 Agent 初始化完成后返回 `{"status":"ok"}`。
+已启用的 MCP 默认使用懒加载：服务启动不建立 MCP Session，首次调用对应 Tool 时才连接；单个 MCP 暂时不可用
+只会使依赖它的 Tool 返回受控错误，不会阻塞其他 Skill 或整个应用启动。
 所有 `/agent/api/*` calls require `Authorization: Bearer <api_auth_token>`。local、dev、prod 都必须配置真实
 `agent.model`、PostgreSQL 与 HTTP MCP；Mock harness、SQLite 和 InMemoryStore 仅能通过测试注入使用。
 DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `agent.enabled_skills` 启用。

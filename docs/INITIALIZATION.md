@@ -275,7 +275,7 @@ mcp_servers:
       - create_ticket
 ```
 
-`src/mcp/manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源；它在 FastAPI lifespan 启动时连接、关闭时释放，request 中不得重建 client。单个 server 初始化失败时，应用应记录该 server ID 并按配置将其标为不可用；不应阻止其他 MCP Server 或非依赖该 server 的聊天请求。调用失败必须映射为受控 MCP error，包含 server ID 与工具名但不包含敏感参数。
+`src/mcp/manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源；FastAPI lifespan 启动时仅校验配置并初始化每个 server 的锁，首次需要该 server 的 Tool 调用时才建立连接，关闭时释放已建立的 client。单个 server 首次连接失败时，应用应记录该 server ID 并按配置将其标为不可用；不应阻止其他 MCP Server、非依赖该 server 的聊天请求或整个应用启动。调用失败必须映射为受控 MCP error，包含 server ID 与工具名但不包含敏感参数。
 
 MCP 服务在应用启动后重启或断连时必须支持恢复：连接异常、transport 异常或连续超时都将对应 server 标记为 disconnected，并关闭失效 client。下一次需要该 server 的 Tool 调用前，Manager 使用每个 server 独立的 async lock 确保仅一个协程执行 reconnect；按 `reconnect_initial_delay_seconds` 到 `reconnect_max_delay_seconds` 做指数退避，并在连接成功后重置退避。重连期间，依赖该 server 的调用快速返回受控 `MCP_UNAVAILABLE` error，其他 server 继续可用。成功或失败的连接、断开与重连事件必须记录 `server_id`、`attempt`、`outcome` 与 `duration_ms`，不记录连接凭据。
 

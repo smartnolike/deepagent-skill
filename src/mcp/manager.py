@@ -30,12 +30,12 @@ class McpClientManager:
         }
 
     async def start(self) -> None:
-        """启动时连接全部 MCP，确保应用只有在依赖服务就绪后才开始接流量。"""
+        """启动时仅校验配置并初始化锁；HTTP MCP 在首次 Tool 调用时连接。"""
         for server_id, server in self.server_settings.items():
             self._locks[server_id] = asyncio.Lock()
             if server.transport == "mock" and not self._settings.allow_test_doubles:
                 raise RuntimeError(f"Mock MCP is not allowed outside tests: {server_id}")
-            await self._get_client(server_id)
+        self._logger.info("mcp_manager_initialized server_count=%s", len(self._locks))
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call a configured, namespaced tool and reconnect the server if needed."""
@@ -44,7 +44,16 @@ class McpClientManager:
         if not server or tool_name not in server.tools:
             self._logger.warning("mcp_tool_rejected server_id=%s tool_name=%s", server_id, tool_name)
             raise RuntimeError("MCP_UNAVAILABLE")
-        client = await self._get_client(server_id)
+        try:
+            client = await self._get_client(server_id)
+        except Exception as exc:
+            self._logger.warning(
+                "mcp_connect_failed server_id=%s tool_name=%s error_type=%s",
+                server_id,
+                tool_name,
+                type(exc).__name__,
+            )
+            raise RuntimeError("MCP_UNAVAILABLE") from exc
         try:
             self._logger.info("mcp_tool_started server_id=%s tool_name=%s", server_id, tool_name)
             result = await client.call_tool(tool_name, arguments)
@@ -55,8 +64,17 @@ class McpClientManager:
             await self._disconnect(server_id)
             if tool_name == "create_ticket":
                 raise RuntimeError("MCP_UNAVAILABLE")
-            client = await self._get_client(server_id)
-            result = await client.call_tool(tool_name, arguments)
+            try:
+                client = await self._get_client(server_id)
+                result = await client.call_tool(tool_name, arguments)
+            except Exception as exc:
+                self._logger.warning(
+                    "mcp_reconnect_failed server_id=%s tool_name=%s error_type=%s",
+                    server_id,
+                    tool_name,
+                    type(exc).__name__,
+                )
+                raise RuntimeError("MCP_UNAVAILABLE") from exc
             self._logger.info("mcp_tool_completed_after_reconnect server_id=%s tool_name=%s", server_id, tool_name)
             return result
 
@@ -71,7 +89,8 @@ class McpClientManager:
         client = self._clients.get(server_id)
         if client:
             return client
-        async with self._locks[server_id]:
+        lock = self._locks.setdefault(server_id, asyncio.Lock())
+        async with lock:
             if server_id not in self._clients:
                 server = self.server_settings[server_id]
                 if server.transport == "mock":
