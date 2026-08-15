@@ -2,10 +2,16 @@
 
 # 应用生命周期集中管理数据库、MCP、检查点与长期记忆资源，避免请求内重复创建连接。
 
+import asyncio
 import logging
+import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+
+# psycopg3 的异步连接不兼容 Windows 默认 ProactorEventLoop；必须在 Uvicorn 创建事件循环前切换。
+if sys.platform == "win32":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse

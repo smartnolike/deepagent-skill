@@ -8,6 +8,7 @@ import certifi
 import httpx
 
 from src.common.httpx_client import HttpxClient
+from src.config.tool_settings import PROJECT_ROOT, ToolSettings
 from src.tools.echo import echo_text
 from src.tools.external_status import get_configured_service_status
 
@@ -38,3 +39,21 @@ def test_httpx_client_rejects_empty_certificate(tmp_path) -> None:
 
 async def test_echo_text_tool_returns_its_input() -> None:
     assert await echo_text.ainvoke({"text": "你好，DeepAgent"}) == "你好，DeepAgent"
+
+
+def test_relative_root_ca_path_is_resolved_from_project_root(monkeypatch, tmp_path) -> None:
+    """证书相对路径不应受 PyCharm 或命令行的当前工作目录影响。"""
+    monkeypatch.chdir(tmp_path)
+
+    settings = ToolSettings()
+
+    assert settings.root_ca_path == (PROJECT_ROOT / "build/root.cer").resolve()
+
+
+def test_absolute_root_ca_path_is_preserved(tmp_path) -> None:
+    """部署环境显式提供的绝对证书路径必须保持不变。"""
+    certificate = (tmp_path / "company-root.cer").resolve()
+
+    settings = ToolSettings(root_ca_path=certificate)
+
+    assert settings.root_ca_path == certificate
