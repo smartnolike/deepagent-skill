@@ -22,6 +22,17 @@ alembic upgrade head
 uvicorn src.main:app --reload
 ```
 
+Windows 使用 psycopg3 的异步 Checkpointer 时，请通过项目启动器运行，不要直接使用 `uvicorn` CLI：
+
+```bat
+set AGENT_ENV=local
+.\.venv\Scripts\python.exe -m src.main
+```
+
+项目启动器会显式指定 `asyncio:SelectorEventLoop`，因为 psycopg3 不兼容 Windows 默认的
+`ProactorEventLoop`。PyCharm Run Configuration 也应使用 Module name `src.main`，而不是 FastAPI / Uvicorn
+类型的配置。
+
 `GET /health` 不需要认证，并在应用、PostgreSQL、Checkpointer 与 Agent 初始化完成后返回 `{"status":"ok"}`。
 已启用的 MCP 默认使用懒加载：服务启动不建立 MCP Session，首次调用对应 Tool 时才连接；单个 MCP 暂时不可用
 只会使依赖它的 Tool 返回受控错误，不会阻塞其他 Skill 或整个应用启动。

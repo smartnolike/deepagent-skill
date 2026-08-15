@@ -151,11 +151,17 @@ app = create_app()
 
 def start_server() -> None:
     """以模块方式启动本地 Uvicorn 服务。"""
-    # 使用 import string 让 Uvicorn 能正确管理应用生命周期和可选 reload。
+    # Windows 下必须显式指定 SelectorEventLoop。部分 Uvicorn 版本会直接创建 ProactorEventLoop，
+    # 从而绕过模块导入阶段设置的 event loop policy，导致 psycopg3 异步 Checkpointer 无法启动。
     import uvicorn
 
     logger.info("server_starting host=0.0.0.0 port=8000")
-    uvicorn.run("src.main:app", host="0.0.0.0", port=8000)
+    uvicorn.run(
+        "src.main:app",
+        host="0.0.0.0",
+        port=8000,
+        loop="asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto",
+    )
 
 
 if __name__ == "__main__":
