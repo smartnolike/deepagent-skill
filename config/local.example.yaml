@@ -13,8 +13,9 @@ agent:
   # 不配置 api_key；内部网关通过 translator 获取短期 Token。
   # token_auth:
   #   translator_url: ${TRANSLATOR_URL}
-  #   service_account: ${SERVICE_ACCOUNT}
+  #   service_account_name: ${SERVICE_ACCOUNT_NAME}
   #   service_account_password: ${SERVICE_ACCOUNT_PASSWORD}
+  #   token_ttl_seconds: 30
   #   refresh_before_expiry_seconds: 5
   #   request_timeout_seconds: 3
   skills_dir: skill-packages

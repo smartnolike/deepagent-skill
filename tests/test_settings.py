@@ -77,7 +77,7 @@ def test_dynamic_token_auth_requires_model_base_url() -> None:
                 "agent": {
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
-                        "service_account": "svc",
+                        "service_account_name": "svc",
                         "service_account_password": "secret",
                     }
                 },
@@ -97,7 +97,7 @@ def test_dynamic_token_auth_accepts_secret_manager_reference() -> None:
                 "base_url": "https://model.example/v1",
                 "token_auth": {
                     "translator_url": "https://translator.example/token",
-                    "service_account": "svc",
+                    "service_account_name": "svc",
                     "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
                 },
             },
@@ -121,7 +121,7 @@ def test_dynamic_token_auth_rejects_multiple_password_sources() -> None:
                     "base_url": "https://model.example/v1",
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
-                        "service_account": "svc",
+                        "service_account_name": "svc",
                         "service_account_password": "password",
                         "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
                     },
@@ -143,7 +143,7 @@ def test_openai_provider_rejects_internal_token_auth() -> None:
                     "provider": "openai",
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
-                        "service_account": "svc",
+                        "service_account_name": "svc",
                         "service_account_password": "secret",
                     },
                 },

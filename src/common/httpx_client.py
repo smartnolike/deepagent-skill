@@ -42,8 +42,13 @@ class HttpxClient:
         )
         return payload
 
+    @property
+    def async_client(self) -> httpx.AsyncClient:
+        """Expose the application-owned client for compatible async SDKs."""
+        return self._client
+
     async def post_json(
-        self, url: str, payload: dict[str, str], timeout_seconds: float
+        self, url: str, payload: dict[str, object], timeout_seconds: float
     ) -> dict[str, object]:
         """执行 JSON POST；日志不记录请求 payload、header 或响应正文。"""
         started = time.perf_counter()

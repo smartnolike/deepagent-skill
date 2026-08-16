@@ -49,7 +49,7 @@ async def test_startup_resolves_secret_manager_password_once(monkeypatch: pytest
         _settings(
             {
                 "translator_url": "https://translator.example/token",
-                "service_account": "svc",
+                "service_account_name": "svc",
                 "service_account_password_secret": secret_version,
             }
         )
@@ -69,7 +69,7 @@ async def test_startup_uses_direct_local_password_without_secret_manager(monkeyp
         _settings(
             {
                 "translator_url": "https://translator.example/token",
-                "service_account": "svc",
+                "service_account_name": "svc",
                 "service_account_password": "local-password",
             }
         )

@@ -355,17 +355,19 @@ Alembic migration；部署数据库账号需要最小化的 `SELECT` 权限。�
 模型来源由 `agent.provider` 明确选择：`internal` 代表公司内部 OpenAI-compatible 网关，必须配置
 `agent.base_url` 与 `agent.token_auth`；`openai` 代表 OpenAI 官方外部模型，必须配置固定
 `agent.api_key`，且禁止 `base_url` 与 `token_auth`；`openai_compatible` 代表 DeepSeek 等兼容 OpenAI 协议的
-外部模型，必须配置固定 `agent.api_key` 与 `agent.base_url`，且禁止 `token_auth`。内部 Token 配置包含 `translator_url`、`service_account`、
-`service_account_password`、`refresh_before_expiry_seconds`（30 秒 Token 推荐为 5）和 `request_timeout_seconds`。
+外部模型，必须配置固定 `agent.api_key` 与 `agent.base_url`，且禁止 `token_auth`。内部 Token 配置包含 `translator_url`、`service_account_name`、
+`service_account_password`、`token_ttl_seconds`（默认 30）、`refresh_before_expiry_seconds`（30 秒 Token 推荐为 5）和 `request_timeout_seconds`。
 Agent Factory 仅对 internal Provider 使用 `ChatOpenAI(api_key=token_provider.get_token)`：每一条新的
 模型 HTTP 请求建立前，Token Provider 才按需请求或复用 Token；已建立的 SSE 流不再续期或重复校验 Token。默认
-translator request 为 `{"service_account":"...","service_account_password":"..."}`，response 为
-`{"access_token":"...","expires_in":30}`；不同字段名可通过 `token_field` 与 `expires_in_field` 配置。
-Token Provider 以单锁去重并缓存至临近过期，Token、密码和 HTTP body 禁止进入日志。
+translator request 为
+`{"input_token_state":{"token_type":"CREDENTIAL","username":"...","password":"..."},"output_token_state":{"token_type":"JWT"}}`，
+response 为 `{"issued_token":"..."}`。Translator 不返回有效期，因此 Token Provider 按 `token_ttl_seconds`
+缓存，并在距离该本地有效期 `refresh_before_expiry_seconds` 时刷新；前者必须大于后者。不同 Token 字段可通过
+`token_field` 配置。Token Provider 以单锁去重，Token、密码和 HTTP body 禁止进入日志。
 
 ## 自定义 Tool 与外部 HTTP
 
-应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或 dynamic model token 时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
+应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token 和内部 ChatOpenAI 模型网关请求）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或内部动态 Token 模型时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
 
 ## 长期记忆
 

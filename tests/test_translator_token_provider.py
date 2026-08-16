@@ -15,23 +15,25 @@ class FakeTokenHttpxClient:
     def __init__(self, responses: list[dict[str, object]]) -> None:
         self._responses = responses
         self.calls = 0
+        self.payloads: list[dict[str, object]] = []
 
     async def post_json(
-        self, url: str, payload: dict[str, str], timeout_seconds: float
+        self, url: str, payload: dict[str, object], timeout_seconds: float
     ) -> dict[str, object]:
         self.calls += 1
+        self.payloads.append(payload)
         return self._responses.pop(0)
 
 
 @pytest.mark.asyncio
 async def test_provider_reuses_short_lived_token_before_refresh_window() -> None:
     client = FakeTokenHttpxClient(
-        [{"access_token": "token-one", "expires_in": 30}, {"access_token": "token-two", "expires_in": 30}]
+        [{"issued_token": "token-one"}, {"issued_token": "token-two"}]
     )
     provider = TranslatorTokenProvider(
         TokenAuthSettings(
             translator_url="https://translator.example/token",
-            service_account="svc",
+            service_account_name="svc",
             service_account_password="secret",
             refresh_before_expiry_seconds=5,
         ),
@@ -42,15 +44,25 @@ async def test_provider_reuses_short_lived_token_before_refresh_window() -> None
     assert await provider.get_token() == "token-one"
     assert await provider.get_token() == "token-one"
     assert client.calls == 1
+    assert client.payloads == [
+        {
+            "input_token_state": {
+                "token_type": "CREDENTIAL",
+                "username": "svc",
+                "password": "secret",
+            },
+            "output_token_state": {"token_type": "JWT"},
+        }
+    ]
 
 
 @pytest.mark.asyncio
 async def test_provider_raises_safe_error_for_invalid_response() -> None:
-    client = FakeTokenHttpxClient([{"access_token": ""}])
+    client = FakeTokenHttpxClient([{"issued_token": ""}])
     provider = TranslatorTokenProvider(
         TokenAuthSettings(
             translator_url="https://translator.example/token",
-            service_account="svc",
+            service_account_name="svc",
             service_account_password="secret",
         ),
         SecretStr("secret"),
@@ -59,3 +71,15 @@ async def test_provider_raises_safe_error_for_invalid_response() -> None:
 
     with pytest.raises(RuntimeError, match="MODEL_TOKEN_UNAVAILABLE"):
         await provider.get_token()
+
+
+def test_provider_requires_refresh_window_shorter_than_documented_ttl() -> None:
+    """避免每次模型请求都因安全窗口覆盖整个 Token 生命周期而刷新。"""
+    with pytest.raises(ValueError, match="refresh_before_expiry_seconds"):
+        TokenAuthSettings(
+            translator_url="https://translator.example/token",
+            service_account_name="svc",
+            service_account_password="secret",
+            token_ttl_seconds=30,
+            refresh_before_expiry_seconds=30,
+        )

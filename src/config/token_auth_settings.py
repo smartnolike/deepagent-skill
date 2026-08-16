@@ -9,13 +9,13 @@ class TokenAuthSettings(BaseModel):
     """Credentials and response mapping for the translator token endpoint."""
 
     translator_url: str
-    service_account: str
+    service_account_name: str
     service_account_password: SecretStr | None = None
     service_account_password_secret: str | None = None
     refresh_before_expiry_seconds: int = Field(default=5, ge=0)
+    token_ttl_seconds: int = Field(default=30, gt=0)
     request_timeout_seconds: float = Field(default=3.0, gt=0)
-    token_field: str = "access_token"
-    expires_in_field: str = "expires_in"
+    token_field: str = "issued_token"
 
     @model_validator(mode="after")
     def validate_password_source(self) -> "TokenAuthSettings":
@@ -26,4 +26,6 @@ class TokenAuthSettings(BaseModel):
             raise ValueError(
                 "exactly one of service_account_password or service_account_password_secret is required"
             )
+        if self.refresh_before_expiry_seconds >= self.token_ttl_seconds:
+            raise ValueError("refresh_before_expiry_seconds must be less than token_ttl_seconds")
         return self

@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 
 class TranslatorTokenProvider:
-    """Fetch and cache a translator-issued bearer token until near expiry."""
+    """Fetch and cache a translator-issued bearer token for its documented lifetime."""
 
     def __init__(self, settings: TokenAuthSettings, service_account_password: SecretStr, httpx_client: HttpxClient) -> None:
         self._settings = settings
@@ -50,22 +50,23 @@ class TranslatorTokenProvider:
             response = await self._httpx_client.post_json(
                 self._settings.translator_url,
                 {
-                    "service_account": self._settings.service_account,
-                    "service_account_password": self._service_account_password.get_secret_value(),
+                    "input_token_state": {
+                        "token_type": "CREDENTIAL",
+                        "username": self._settings.service_account_name,
+                        "password": self._service_account_password.get_secret_value(),
+                    },
+                    "output_token_state": {"token_type": "JWT"},
                 },
                 self._settings.request_timeout_seconds,
             )
             token = response.get(self._settings.token_field)
-            expires_in = response.get(self._settings.expires_in_field)
             if not isinstance(token, str) or not token:
                 raise ValueError("token response does not contain a non-empty token")
-            if not isinstance(expires_in, (int, float)) or expires_in <= 0:
-                raise ValueError("token response does not contain a positive expires_in value")
         except Exception as exc:
             logger.warning("model_token_refresh_failed error_type=%s", type(exc).__name__)
             raise RuntimeError("MODEL_TOKEN_UNAVAILABLE") from exc
 
         self._token = token
-        self._expires_at = asyncio.get_running_loop().time() + float(expires_in)
-        logger.info("model_token_refreshed expires_in_seconds=%s", expires_in)
+        self._expires_at = asyncio.get_running_loop().time() + self._settings.token_ttl_seconds
+        logger.info("model_token_refreshed token_ttl_seconds=%s", self._settings.token_ttl_seconds)
         return token

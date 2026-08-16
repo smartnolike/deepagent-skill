@@ -37,10 +37,14 @@ def create_chat_model(
         base_url = settings.base_url if settings.provider == "openai_compatible" else None
 
     model_name = (settings.model or "").removeprefix("openai:")
-    return ChatOpenAI(
-        model=model_name,
-        api_key=api_key,
-        base_url=base_url,
-        streaming=True,
-        max_retries=1,
-    )
+    model_options: dict[str, object] = {
+        "model": model_name,
+        "api_key": api_key,
+        "base_url": base_url,
+        "streaming": True,
+        "max_retries": 1,
+    }
+    if httpx_client is not None:
+        # 内部模型网关同样通过企业根证书访问，不能只让 Translator 使用该证书。
+        model_options["http_async_client"] = httpx_client.async_client
+    return ChatOpenAI(**model_options)

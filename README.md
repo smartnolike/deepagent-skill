@@ -87,7 +87,7 @@ agent:
   base_url: ${MODEL_BASE_URL}
   token_auth:
     translator_url: ${TRANSLATOR_URL}
-    service_account: ${SERVICE_ACCOUNT}
+    service_account_name: ${SERVICE_ACCOUNT_NAME}
     # local：环境变量中的直接密码
     service_account_password: ${SERVICE_ACCOUNT_PASSWORD}
 ```
@@ -101,7 +101,7 @@ agent:
   base_url: ${MODEL_BASE_URL}
   token_auth:
     translator_url: ${TRANSLATOR_URL}
-    service_account: ${SERVICE_ACCOUNT}
+    service_account_name: ${SERVICE_ACCOUNT_NAME}
     service_account_password_secret: >-
       projects/${GOOGLE_CLOUD_PROJECT}/secrets/model-translator-password/versions/3
 ```
@@ -137,19 +137,27 @@ Translator 服务。`openai_compatible` 必须同时提供固定 `api_key` 和 `
 已包含对应字段。服务会在**建立一条新的模型 HTTP 请求前**调用 `translator_url`，并把返回的 Token
 作为 `ChatOpenAI` 的 `api_key`。已建立的流式响应不再刷新或校验 Token，因此 30 秒有效期不会中断该流。
 
+Translator 响应不提供过期时间，因此 Token 生命周期由配置中的 `token_ttl_seconds` 明确声明，默认 30 秒。
 Token 会在进程内缓存至距离过期 5 秒；下一条模型请求再触发刷新。并发请求共用同一把锁，避免同时请求
-Token 服务。默认 Token 接口约定如下：
+Token 服务。`refresh_before_expiry_seconds` 必须小于 `token_ttl_seconds`。默认 Token 接口约定如下：
 
 ```json
 // request
-{"service_account": "...", "service_account_password": "..."}
+{
+  "input_token_state": {
+    "token_type": "CREDENTIAL",
+    "username": "...",
+    "password": "..."
+  },
+  "output_token_state": {"token_type": "JWT"}
+}
 
 // response
-{"access_token": "...", "expires_in": 30}
+{"issued_token": "..."}
 ```
 
-若响应字段不同，可用 `agent.token_auth.token_field` 和 `expires_in_field` 指定。Token、密码、请求 body
-和响应 body 均不会进入日志。配置动态 Token 时同样复用 `tools.root_ca_path` 指定的根证书。
+若响应字段不同，可用 `agent.token_auth.token_field` 指定。Token、密码、请求 body 和响应 body 均不会进入
+日志。配置内部动态 Token 模型时，Translator 与 ChatOpenAI 都复用 `tools.root_ca_path` 指定的根证书。
 
 ## 添加自定义 Tool
 
