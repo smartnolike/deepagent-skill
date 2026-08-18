@@ -32,8 +32,9 @@ class LangfuseObservability:
         )
 
     def create_callback(self) -> CallbackHandler:
-        """Create one callback per graph invocation to keep LangChain run state isolated."""
-        return CallbackHandler(public_key=self._public_key, update_trace=True)
+        """Create one callback per graph invocation across supported Langfuse SDK versions."""
+        # ``update_trace`` 并非所有 Langfuse SDK 版本都支持；metadata 仍由 LangGraph config 提供。
+        return CallbackHandler(public_key=self._public_key)
 
     async def close(self) -> None:
         """Flush background telemetry without blocking FastAPI's event loop."""

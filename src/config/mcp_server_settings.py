@@ -11,10 +11,8 @@ class McpServerSettings(BaseModel):
     """Connection and tool allowlist for one MCP server."""
 
     enabled: bool = True
-    transport: Literal["http", "stdio", "mock"]
+    transport: Literal["http"] = "http"
     url: HttpUrl | None = None
-    command: str | None = None
-    args: list[str] = Field(default_factory=list)
     headers: dict[str, str] = Field(default_factory=dict)
     timeout_seconds: float = 15.0
     reconnect_initial_delay_seconds: float = 1.0

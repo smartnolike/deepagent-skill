@@ -30,60 +30,15 @@ def test_auth_and_conversation_lifecycle(client) -> None:
     assert history.json() == []
 
 
-def test_bucket_ticket_stream(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
-    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
-    first = client.post(
-        f"/agent/api/conversations/{conversation_id}/messages", headers=headers,
-        json={"staff_id": "staff-a", "content": "我要申请一个 bucket"},
-    )
-    assert "ticketing__get_resource_schema" in first.text
-    second = client.post(
-        f"/agent/api/conversations/{conversation_id}/messages", headers=headers,
-        json={"staff_id": "staff-a", "content": "us-east1，用 STANDARD"},
-    )
-    assert "confirmation_required" in second.text
-    confirmed = client.post(
-        f"/agent/api/conversations/{conversation_id}/tool-confirmations",
-        headers=headers,
-        json={"staff_id": "staff-a", "action": "approve"},
-    )
-    assert "REQ-10001" in confirmed.text
-    history = client.get(f"/agent/api/conversations/{conversation_id}/messages?staff_id=staff-a", headers=headers)
-    assert len(history.json()) == 4
-
-
-def test_ticket_confirmation_can_be_cancelled_by_conversation_owner(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
-    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
-    client.post(
-        f"/agent/api/conversations/{conversation_id}/messages",
-        headers=headers,
-        json={"staff_id": "staff-a", "content": "我要申请一个 bucket"},
-    )
-    pending = client.post(
-        f"/agent/api/conversations/{conversation_id}/messages",
-        headers=headers,
-        json={"staff_id": "staff-a", "content": "us-east1 STANDARD"},
-    )
-    assert "confirmation_required" in pending.text
-    cancelled = client.post(
-        f"/agent/api/conversations/{conversation_id}/tool-confirmations",
-        headers=headers,
-        json={"staff_id": "staff-a", "action": "reject"},
-    )
-    assert "This tool execution was cancelled." in cancelled.text
-
-
-def test_english_message_receives_english_mock_response(client) -> None:
+def test_message_stream_uses_test_agent_injected_at_application_boundary(client) -> None:
     headers = {"Authorization": "Bearer test-token"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
     response = client.post(
         f"/agent/api/conversations/{conversation_id}/messages",
         headers=headers,
-        json={"staff_id": "staff-a", "content": "Please create a bucket"},
+        json={"staff_id": "staff-a", "content": "Please create a resource"},
     )
-    assert "The bucket request still needs" in response.text
+    assert "Test agent response." in response.text
 
 
 def test_list_conversations_is_paginated(client) -> None:

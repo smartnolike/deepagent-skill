@@ -42,16 +42,6 @@ class Settings(BaseSettings):
     def validate_database_auth(self) -> "Settings":
         if self.agent_env == "local" and not self.database.password:
             raise ValueError("database.password is required for local")
-        if not self.allow_test_doubles and self.agent.model is None:
-            raise ValueError("agent.model is required outside the test-double runtime")
-        if not self.allow_test_doubles:
-            mock_servers = [
-                server_id
-                for server_id, server in self.mcp_servers.items()
-                if server.enabled and server.transport == "mock"
-            ]
-            if mock_servers:
-                raise ValueError(f"mock MCP servers are only allowed in tests: {', '.join(mock_servers)}")
         self.langfuse.validate_sources(self.agent_env)
         return self
 

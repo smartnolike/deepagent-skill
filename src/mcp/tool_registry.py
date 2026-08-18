@@ -17,16 +17,18 @@ class McpToolRegistry:
         self._manager = manager
 
     def build(self) -> list[StructuredTool]:
-        """Create namespaced async LangChain tools from the MCP configuration."""
+        """Create namespaced Tools using the MCP Server's real input schemas."""
         tools: list[StructuredTool] = []
-        for server_id, server in self._manager.server_settings.items():
-            for tool_name in server.tools:
-                qualified_name = f"{server_id}__{tool_name}"
+        for server_id, definitions in self._manager.tool_definitions.items():
+            for definition in definitions:
+                qualified_name = f"{server_id}__{definition.name}"
                 tools.append(
-                    StructuredTool.from_function(
+                    StructuredTool(
                         coroutine=self._tool_callable(qualified_name),
                         name=qualified_name,
-                        description=f"Call MCP tool {tool_name} on configured server {server_id}.",
+                        description=definition.description,
+                        # 直接使用 MCP inputSchema，避免 **arguments 被推断成同名嵌套字段。
+                        args_schema=definition.input_schema,
                     )
                 )
         return tools

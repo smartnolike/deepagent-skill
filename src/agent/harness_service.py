@@ -10,7 +10,6 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
 from src.common.language import ResponseLanguage
-from src.agent.mock_service import MockHarnessService
 from src.database.models.agent.message import Message
 from src.observability.langfuse_observability import LangfuseObservability
 
@@ -18,16 +17,14 @@ logger = logging.getLogger(__name__)
 
 
 class DeepAgentHarnessService:
-    """Use one configured Agent, with a deterministic local fallback."""
+    """Use one configured DeepAgent and adapt its events to the API protocol."""
 
     def __init__(
         self,
-        graph: Any | None,
-        fallback: MockHarnessService,
+        graph: Any,
         observability: LangfuseObservability | None = None,
     ) -> None:
         self._graph = graph
-        self._fallback = fallback
         self._observability = observability
 
     async def reply(
@@ -40,11 +37,6 @@ class DeepAgentHarnessService:
         response_language: ResponseLanguage,
     ) -> AsyncIterator[tuple[str, dict[str, str]]]:
         """Run the root agent under one thread ID and staff-scoped context."""
-        if self._graph is None:
-            logger.info("agent_invocation mode=mock conversation_id=%s", conversation_id)
-            async for event in self._fallback.reply(conversation_id, staff_id, content, history, response_language):
-                yield event
-            return
         config = self._graph_config(conversation_id, staff_id, agent_run_id)
         logger.info("agent_invocation mode=deepagent conversation_id=%s staff_id=%s", conversation_id, staff_id)
         context = {
@@ -71,10 +63,6 @@ class DeepAgentHarnessService:
         response: dict[str, object] | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, str]]]:
         """按当前会话 checkpoint 恢复一个已暂停的确认型 Tool 调用。"""
-        if self._graph is None:
-            async for event in self._fallback.resume(action, history, response_language):
-                yield event
-            return
         config = self._graph_config(conversation_id, staff_id, agent_run_id)
         context = {
             "staff_id": staff_id,

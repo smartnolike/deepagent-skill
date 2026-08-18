@@ -36,11 +36,11 @@ def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None
     assert settings.mcp_servers == {}
 
 
-def test_real_runtime_requires_agent_model() -> None:
-    with pytest.raises(ValidationError, match="agent.model"):
-        Settings.model_validate(
-            {"agent_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
-        )
+def test_settings_allow_missing_model_before_agent_factory_initialization() -> None:
+    settings = Settings.model_validate(
+        {"agent_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+    )
+    assert settings.agent.model is None
 
 
 def test_yaml_expands_environment_references(tmp_path, monkeypatch) -> None:
@@ -50,8 +50,9 @@ allow_test_doubles: true
 database: {host: localhost, name: deepagent, user: postgres, password: "${DB_PASSWORD}"}
 api_auth_token: "${API_TOKEN:-fallback-token}"
 mcp_servers:
-  ticketing:
-    transport: mock
+  danaan:
+    transport: http
+    url: https://mcp.example.internal/api
     headers: {Authorization: 'Bearer ${MCP_TOKEN}'}
     tools: []
 """,
@@ -62,7 +63,7 @@ mcp_servers:
     monkeypatch.setenv("MCP_TOKEN", "mcp-secret")
     settings = load_settings(tmp_path)
     assert settings.api_auth_token.get_secret_value() == "fallback-token"
-    assert settings.mcp_servers["ticketing"].headers["Authorization"] == "Bearer mcp-secret"
+    assert settings.mcp_servers["danaan"].headers["Authorization"] == "Bearer mcp-secret"
 
 
 def test_local_langfuse_accepts_direct_environment_keys() -> None:

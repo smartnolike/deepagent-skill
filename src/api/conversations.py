@@ -11,12 +11,13 @@ from collections.abc import AsyncIterator
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
-from src.core.auth import require_api_token
-from src.core.request_context import bind_request_id
-from src.common.language import resolve_response_language
-from src.api.schemas.conversation_title import ConversationTitleRequest
-from src.database.session import get_db_session
-from src.services.conversation_service import ConversationService
+from api.schemas.conversation_title import ConversationTitleRequest
+from common.language import resolve_response_language
+from core.auth import require_api_token
+from core.errors import DomainError
+from core.request_context import bind_request_id
+from database.session import get_db_session
+from services.conversation_service import ConversationService
 
 router = APIRouter(prefix="/api/conversations", dependencies=[Depends(require_api_token)])
 logger = logging.getLogger(__name__)
@@ -126,18 +127,12 @@ async def confirm_tool(
 ) -> StreamingResponse:
     """由会话所有者确认或取消当前暂停的 MCP Tool 调用。"""
     if payload.get("action") not in {"approve", "reject", "respond"}:
-        from src.core.errors import DomainError
-
         raise DomainError("INVALID_TOOL_CONFIRMATION", "action must be approve, reject, or respond", 422)
     response = payload.get("response")
     if payload.get("action") == "respond" and not isinstance(response, dict):
-        from src.core.errors import DomainError
-
         raise DomainError("INVALID_FORM_RESPONSE", "response must be an object when action is respond", 422)
     form_name = payload.get("form_name")
     if form_name is not None and not isinstance(form_name, str):
-        from src.core.errors import DomainError
-
         raise DomainError("INVALID_FORM_NAME", "form_name must be a string", 422)
     response_language = resolve_response_language(None, accept_language)
 

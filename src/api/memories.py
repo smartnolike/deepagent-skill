@@ -4,9 +4,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from src.api.schemas.memory import MemoryRequest
-from src.core.auth import require_api_token
-from src.services.memory_service import MemoryService
+from api.schemas.memory import MemoryRequest
+from core.auth import require_api_token
+from services.memory_service import MemoryService
 
 router = APIRouter(prefix="/api/memories", dependencies=[Depends(require_api_token)])
 

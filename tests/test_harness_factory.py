@@ -1,8 +1,9 @@
 """DeepAgent harness factory tests."""
 
-# 未配置真实模型时必须保持可运行的 Mock harness，便于本地回归测试。
+# 未配置模型时工厂必须拒绝启动；生产环境不提供 fallback harness。
 
-from src.agent.harness_service import DeepAgentHarnessService
+import pytest
+
 from src.agent.agent_factory import (
     _harness_profile_key,
     _response_language_system_prompt,
@@ -16,20 +17,17 @@ from src.services.memory_service import MemoryService
 from langgraph.store.memory import InMemoryStore
 
 
-def test_factory_uses_mock_harness_without_model() -> None:
+def test_factory_requires_a_configured_model() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",
-            "mcp_servers": {"ticketing": {"transport": "mock", "tools": []}},
+            "mcp_servers": {},
         }
     )
-    assert isinstance(
-        create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore())),
-        DeepAgentHarnessService,
-    )
+    with pytest.raises(RuntimeError, match="agent.model is required"):
+        create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
 
 
 def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
@@ -38,8 +36,8 @@ def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
 
 
 def test_skill_bound_prompt_limits_the_agent_to_enabled_skills() -> None:
-    prompt = _skill_bound_system_prompt(["ticket-request"])
-    assert "ticket-request" in prompt
+    prompt = _skill_bound_system_prompt(["danaan-cloud-resource"])
+    assert "danaan-cloud-resource" in prompt
     assert "Do not improvise workflows" in prompt
     assert "outside the enabled Skill scope" in prompt
 

@@ -82,7 +82,7 @@ src/
 ├── agent/{factory.py,checkpointer.py,service.py}
 ├── mcp/{client.py,manager.py,tools.py}
 skill-packages/
-└── ticket-request/SKILL.md
+└── danaan-cloud-resource/SKILL.md
 alembic/
 config/{local,dev,prod}.example.yaml
 tests/
@@ -158,7 +158,7 @@ POST   /agent/api/conversations/{conversation_id}/messages
 
 ## 9. 消息处理流程
 
-`POST /agent/api/conversations/{conversation_id}/messages` 收到例如 `{"staff_id":"staff-123","content":"我要申请一个 bucket"}` 后必须：
+`POST /agent/api/conversations/{conversation_id}/messages` 收到例如 `{"staff_id":"staff-123","content":"我要申请 Cloud Storage 资源"}` 后必须：
 
 1. 通过静态 token 鉴权，并校验 conversation 存在且归属该 `staff_id`；
 2. 保存 user message；
@@ -179,10 +179,10 @@ event: token
 data: {"content":"你"}
 
 event: tool_start
-data: {"name":"get_resource_schema"}
+data: {"name":"danaan__external_resource_add"}
 
 event: tool_end
-data: {"name":"get_resource_schema"}
+data: {"name":"danaan__external_resource_add"}
 
 event: done
 data: {...}
@@ -235,103 +235,41 @@ config = {"configurable": {"thread_id": str(conversation_id)}}
 
 页面重开通过 `GET /agent/api/conversations/{id}/messages` 恢复可见历史；再次发消息则由 checkpoint 恢复 Agent 上下文。
 
-## 13. Ticket Request Skill
+## 14. MCP 抽象
 
-创建 `skill-packages/ticket-request/SKILL.md`，用于资源申请：
-
-```text
-用户提出资源申请
-→ 识别 resource_type
-→ MCP get_resource_schema
-→ 按动态 JSON Schema 收集参数
-→ 缺参数时自然语言继续询问
-→ validate_ticket_params
-→ 无效时按错误继续询问
-→ 有效后 create_ticket
-→ 返回 ticket id
-```
-
-Skill 必须明确：
-
-1. 不得猜测 required 参数；resource type 确定后必须调用 `get_resource_schema`。
-2. 依据 JSON Schema 收集参数；一次用户输入可提供多个字段，用户可修改先前字段，始终以最新值为准。
-3. 创建前必须调用 `validate_ticket_params`；失败后继续自然语言追问。
-4. 只有 validation 成功才调用 `create_ticket`。
-5. 不将原始 JSON Schema 直接发给用户，而是转换成自然语言。
-
-## 14. MCP 抽象与 Mock
-
-支持多个 MCP Server。`mcp_servers` 是以稳定 server ID 为 key 的 YAML map；每个 server 定义 `transport`（`http`、`stdio` 或 `mock`）、连接地址或 command、可选 args、headers、timeout、重连策略与允许暴露给 Agent 的 `tools`。headers 支持 YAML 环境变量引用，用于服务端 Bearer Token 等凭据，且不得写入日志。示例：
+支持多个 MCP Server。`mcp_servers` 是以稳定 server ID 为 key 的 YAML map；每个 server 定义 `transport`（当前实现为 `http`）、连接地址、headers、timeout、重连策略与允许暴露给 Agent 的 `tools`。headers 支持 YAML 环境变量引用，用于服务端 Bearer Token 等凭据，且不得写入日志。示例：
 
 ```yaml
 mcp_servers:
-  ticketing:
+  danaan:
     transport: http
-    url: https://mcp.example.internal/ticketing
+    url: ${DANAAN_MCP_URL}
     headers:
-      Authorization: Bearer ${TICKETING_MCP_TOKEN}
+      Authorization: Bearer ${DANAAN_MCP_TOKEN}
     timeout_seconds: 15
     reconnect_initial_delay_seconds: 1
     reconnect_max_delay_seconds: 30
     tools:
-      - get_resource_schema
-      - validate_ticket_params
-      - create_ticket
-  knowledge:
-    transport: stdio
-    command: python
-    args: ["-m", "knowledge_mcp"]
-    timeout_seconds: 10
-    tools: [search_knowledge]
-  demo_ticketing:
-    transport: mock
-    tools:
-      - get_resource_schema
-      - validate_ticket_params
-      - create_ticket
+      - external_resource_add
+    confirmation_required_tools:
+      - external_resource_add
 ```
 
-`src/mcp/manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源；FastAPI lifespan 启动时仅校验配置并初始化每个 server 的锁，首次需要该 server 的 Tool 调用时才建立连接，关闭时释放已建立的 client。单个 server 首次连接失败时，应用应记录该 server ID 并按配置将其标为不可用；不应阻止其他 MCP Server、非依赖该 server 的聊天请求或整个应用启动。调用失败必须映射为受控 MCP error，包含 server ID 与工具名但不包含敏感参数。
+`src/mcp/manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源。FastAPI lifespan 启动时必须为每个 `enabled: true` 的 HTTP MCP 建立连接、执行 `initialize()` 和 `list_tools()`，并以服务端返回的 `name`、`description`、`inputSchema` 作为 Tool 契约。YAML 的 `tools` 仅是白名单：服务端未暴露任何白名单 Tool 时应用启动失败；`enabled: false` 的 server 不连接、不发现、也不向模型暴露 Tool。Registry 必须用真实 `inputSchema` 注册 LangChain Tool，禁止以 `**arguments` 推断通用 schema，避免将业务参数错误包装为 `{ "arguments": {...} }`。
 
-MCP 服务在应用启动后重启或断连时必须支持恢复：连接异常、transport 异常或连续超时都将对应 server 标记为 disconnected，并关闭失效 client。下一次需要该 server 的 Tool 调用前，Manager 使用每个 server 独立的 async lock 确保仅一个协程执行 reconnect；按 `reconnect_initial_delay_seconds` 到 `reconnect_max_delay_seconds` 做指数退避，并在连接成功后重置退避。重连期间，依赖该 server 的调用快速返回受控 `MCP_UNAVAILABLE` error，其他 server 继续可用。成功或失败的连接、断开与重连事件必须记录 `server_id`、`attempt`、`outcome` 与 `duration_ms`，不记录连接凭据。
+MCP 服务在应用启动后重启或断连时必须支持恢复：连接、transport 或超时异常将关闭并丢弃失效 client。Manager 使用每个 server 独立的 async lock 仅建立一个新 Session，重新执行 `initialize()` 与 `list_tools()`，确认白名单 Tool 仍存在后，以原始业务参数自动重试该次 Tool 调用一次；再次失败时返回受控 `MCP_UNAVAILABLE` error。当前版本对所有 MCP Tool 采用同一重试策略，暂不区分只读与写入 Tool。重连若发现 schema 变化，只记录需要重启服务的警告；运行中的 DeepAgent 保持启动时注册的 Tool 契约。成功或失败的连接、断开与重连事件必须记录 `server_id`、工具名、结果与 `duration_ms`，不记录连接凭据或业务参数。
 
-对因断连导致的 in-flight Tool 调用，不透明地重放请求：只读 MCP Tool 可在 client 重连成功后重试一次；写 Tool（包括 `create_ticket`）不得自动重试，除非 MCP 的明确幂等契约和 idempotency key 已配置。用户可在错误提示后重新发起请求。
-
-工具在 Agent registry 中必须使用 `server_id__tool_name` 作为唯一名称，例如 `ticketing__get_resource_schema` 与 `knowledge__search_knowledge`，以避免跨 server 重名。Skill 通过配置的稳定 server ID 调用所需工具；Ticket Request Skill 固定使用 `ticketing__get_resource_schema`、`ticketing__validate_ticket_params` 与 `ticketing__create_ticket`。`tools` 白名单以外的 MCP Tool 不得注册给 Agent。
-
-提供可替换的 client 层，使后续接入真实 server 时无需修改 Agent Service。Ticketing MCP Server 预期工具：
-
-```text
-get_resource_schema(resource_type)
-validate_ticket_params(resource_type, parameters)
-create_ticket(resource_type, parameters)
-```
-
-`get_resource_schema({"resource_type":"bucket"})` 示例返回：
-
-```json
-{
-  "type":"object",
-  "properties":{
-    "region":{"type":"string","enum":["us-east1","us-west1"]},
-    "storage_class":{"type":"string","enum":["STANDARD","NEARLINE"]},
-    "retention_days":{"type":"integer","minimum":1}
-  },
-  "required":["region","storage_class"]
-}
-```
-
-`validate_ticket_params` 返回 `valid`、`missing`、`errors`；`create_ticket` 只能在 validation 成功后调用，示例返回 `{"ticket_id":"REQ-10001","status":"created"}`。`mock` transport 用于 local 与测试，可为一个或多个 server 提供独立的 Fake implementation；测试不得依赖真实 MCP Server。
+工具在 Agent registry 中必须使用 `server_id__tool_name` 作为唯一名称，例如 `danaan__external_resource_add`，以避免跨 server 重名。Skill 通过配置的稳定 server ID 调用所需工具；`tools` 白名单以外的 MCP Tool 不得注册给 Agent。local、dev 与 prod 均连接真实 HTTP MCP Server；测试替身仅可在测试层通过依赖注入或 monkeypatch 提供，生产代码不得包含 Mock MCP 实现。
 
 ### 用户确认型 MCP Tool
 
 有副作用的 Tool 可在所属 `McpServerSettings.confirmation_required_tools` 中声明，且必须同时存在于该 server 的
-`tools` allowlist。例如 `confirmation_required_tools: [create_ticket]` 会生成 `ticketing__create_ticket` 的
+`tools` allowlist。例如 `confirmation_required_tools: [external_resource_add]` 会生成 `danaan__external_resource_add` 的
 DeepAgents `interrupt_on` 规则。Agent 在调用前暂停，Tool 尚未实际执行，API SSE 返回：
 
 ```text
 event: confirmation_required
-data: {"tool_name":"ticketing__create_ticket", "description":"Confirm ticket creation"}
+data: {"tool_name":"danaan__external_resource_add", "description":"Confirm resource request"}
 ```
 
 只有 conversation 所属的 `staff_id` 可以调用
@@ -399,7 +337,7 @@ MVP 只支持显式 API 管理记忆：`PUT /agent/api/memories/{key}`、`GET /a
 
 ## 响应语言
 
-每次用户消息独立决定 **Agent 自然语言回复**：只要 `content` 包含任意中文字符，DeepAgent 和 Mock fallback 均以中文为主；完全不含中文时以英文为主。Ticket ID、字段名、枚举值、Tool 名、URL、代码、产品名和 error code 不翻译。API JSON、认证、校验、SSE `error` 事件和其他系统固定文案始终使用英文。不要翻译已存储的历史消息。
+每次用户消息独立决定 **Agent 自然语言回复**：只要 `content` 包含任意中文字符，DeepAgent 以中文为主；完全不含中文时以英文为主。Ticket ID、字段名、枚举值、Tool 名、URL、代码、产品名和 error code 不翻译。API JSON、认证、校验、SSE `error` 事件和其他系统固定文案始终使用英文。不要翻译已存储的历史消息。
 
 `agent.system_prompt` 必须声明 Skill 文档、Tool 描述、memory、示例和历史消息的语言不能决定 Agent 回复语言。
 `ResponseLanguageMiddleware` 在每次模型调用前从 runtime `response_language` 临时附加权威指令，覆盖 Tool
@@ -431,7 +369,7 @@ docker run \
   postgres:16
 
 alembic upgrade head
-uvicorn src.main:app --reload
+uvicorn main:app --app-dir src --reload
 ```
 
 并说明配置加载方式：运行时仅设置 `AGENT_ENV` 来选择 `config/{AGENT_ENV}.yaml`，从同名 `*.example.yaml` 复制生成实际配置文件；实际 YAML 含数据库密码或 API token 时不得提交。并说明 dev/prod 架构：
@@ -459,7 +397,7 @@ tests/test_conversation_api.py
 tests/test_agent_service.py
 ```
 
-覆盖：YAML 按 `AGENT_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、MCP 重启后的断连标记与下一次调用重连、只读 Tool 单次重试、写 Tool 不自动重试、MCP schema 后继续交互、Mock `create_ticket`、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 时 mock Agent / MCP。
+覆盖：YAML 按 `AGENT_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、MCP 重启后的自动重连与单次重试、MCP schema 后继续交互、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 或 MCP 时仅可在测试层注入 fake。
 
 ## 18. 编码约束
 
@@ -477,10 +415,10 @@ tests/test_agent_service.py
 1. YAML Settings、database engine/session、ORM models、Alembic；
 2. Conversation Repository、Service、API；
 3. Postgres Checkpointer、DeepAgent Factory、Agent Service；
-4. ticket-request SKILL 与 Mock MCP Tools；
+4. Danaan Cloud Resource Skill 与真实 MCP Tools；
 5. Streaming、Auth、日志、error handling、tests、README。
 
-完整验收对话：用户发送“我要申请一个 bucket”，Agent 调用 `get_resource_schema`，自然询问 `region` 与 `storage_class`；用户回复“us-east1，用 STANDARD”后，Agent 调用 `validate_ticket_params` 与 `create_ticket`，并返回 `REQ-10001`。用户离开页面后可读取完整 message 历史，使用同一 conversation ID 再发消息时可由 PostgreSQL checkpoint 恢复上下文。local 用户名/密码模式与 dev/prod 经 Cloud SQL Auth Proxy + IAM 模式均须可用。
+完整验收对话：用户发送 Danaan Cloud Resource 申请，Agent 按 `danaan-cloud-resource` Skill 收集表单字段并调用 `danaan__external_resource_add`；该 Tool 在用户确认后执行。用户离开页面后可读取完整 message 历史，使用同一 conversation ID 再发消息时可由 PostgreSQL checkpoint 恢复上下文。local 用户名/密码模式与 dev/prod 经 Cloud SQL Auth Proxy + IAM 模式均须可用。
 
 ## 20. 实施前检查
 

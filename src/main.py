@@ -217,10 +217,11 @@ def start_server() -> None:
 
     logger.info("server_starting host=0.0.0.0 port=8000")
     uvicorn.run(
-        "src.main:app",
+        "main:app",
         host="0.0.0.0",
         port=8000,
         loop="asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto",
+        app_dir="src",
     )
 
 

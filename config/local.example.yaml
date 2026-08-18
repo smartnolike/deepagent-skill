@@ -19,7 +19,7 @@ agent:
   #   refresh_before_expiry_seconds: 5
   #   request_timeout_seconds: 3
   skills_dir: skill-packages
-  enabled_skills: [ticket-request, danaan-cloud-resource]
+  enabled_skills: [danaan-cloud-resource]
 database:
   host: localhost
   port: 5432
@@ -41,15 +41,6 @@ tools:
   external_status_url: null
   root_ca_path: build/root.cer
 mcp_servers:
-  ticketing:
-    enabled: true
-    transport: http
-    url: https://mcp.example.internal/ticketing
-    timeout_seconds: 15
-    reconnect_initial_delay_seconds: 1
-    reconnect_max_delay_seconds: 30
-    tools: [get_resource_schema, validate_ticket_params, create_ticket]
-    confirmation_required_tools: [create_ticket]
   danaan:
     enabled: true
     transport: http

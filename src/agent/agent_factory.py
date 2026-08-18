@@ -19,7 +19,6 @@ from src.agent.agent_context import AgentContext
 from src.agent.harness_service import DeepAgentHarnessService
 from src.agent.middleware.response_language_middleware import ResponseLanguageMiddleware
 from src.agent.model_factory import create_chat_model
-from src.agent.mock_service import MockHarnessService
 from src.common.httpx_client import HttpxClient
 from src.config.settings import Settings
 from src.core.runtime_secrets import RuntimeSecrets
@@ -40,12 +39,9 @@ def create_agent_service(
     checkpointer=None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> DeepAgentHarnessService:
-    """创建真实根 Agent；仅测试运行时允许使用确定性 fallback。"""
-    fallback = MockHarnessService(mcp_manager)
+    """创建配置的单根 DeepAgent。"""
     if settings.agent.model is None:
-        if not settings.allow_test_doubles:
-            raise RuntimeError("agent.model is required")
-        return DeepAgentHarnessService(None, fallback, observability)
+        raise RuntimeError("agent.model is required")
     register_harness_profile(
         _harness_profile_key(settings.agent.model),
         HarnessProfile(
@@ -78,7 +74,7 @@ def create_agent_service(
         middleware=[ResponseLanguageMiddleware()],
         name="deepagent-platform",
     )
-    return DeepAgentHarnessService(graph, fallback, observability)
+    return DeepAgentHarnessService(graph, observability)
 
 
 def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, object]]:
