@@ -25,6 +25,7 @@ from src.config.settings import Settings
 from src.core.runtime_secrets import RuntimeSecrets
 from src.mcp.manager import McpClientManager
 from src.mcp.tool_registry import McpToolRegistry
+from src.observability.langfuse_observability import LangfuseObservability
 from src.services.memory_service import MemoryService
 from src.tools.registry import CustomToolRegistry
 
@@ -34,6 +35,7 @@ def create_agent_service(
     mcp_manager: McpClientManager,
     memory_service: MemoryService,
     runtime_secrets: RuntimeSecrets | None = None,
+    observability: LangfuseObservability | None = None,
     httpx_client: HttpxClient | None = None,
     checkpointer=None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
@@ -43,10 +45,15 @@ def create_agent_service(
     if settings.agent.model is None:
         if not settings.allow_test_doubles:
             raise RuntimeError("agent.model is required")
-        return DeepAgentHarnessService(None, fallback)
+        return DeepAgentHarnessService(None, fallback, observability)
     register_harness_profile(
         _harness_profile_key(settings.agent.model),
-        HarnessProfile(general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False)),
+        HarnessProfile(
+            # 不注册默认子 Agent，避免将 task Tool 暴露给当前单 Agent Harness。
+            general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
+            # 这些 Tool 在发往模型前即被剔除；FilesystemPermission 仍在执行层做兜底。
+            excluded_tools=frozenset({"delete", "write_file", "edit_file", "execute"}),
+        ),
     )
     # FilesystemBackend 的虚拟根目录就是 skill-packages；SkillsMiddleware
     # 仅接受“包含多个 Skill 子目录”的来源，不能直接传入单个 Skill 目录。
@@ -71,7 +78,7 @@ def create_agent_service(
         middleware=[ResponseLanguageMiddleware()],
         name="deepagent-platform",
     )
-    return DeepAgentHarnessService(graph, fallback)
+    return DeepAgentHarnessService(graph, fallback, observability)
 
 
 def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, object]]:

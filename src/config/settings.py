@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .agent_settings import AgentSettings
 from .database_settings import DatabaseSettings
+from .langfuse_settings import LangfuseSettings
 from .mcp_server_settings import McpServerSettings
 from .tool_settings import ToolSettings
 
@@ -19,14 +20,16 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=None, extra="forbid")
 
-    app_env: Literal["local", "dev", "prod"]
+    agent_env: Literal["local", "dev", "prod"]
     agent: AgentSettings = AgentSettings()
     tools: ToolSettings = ToolSettings()
+    langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     database: DatabaseSettings
     api_auth_token: SecretStr
     mcp_servers: dict[str, McpServerSettings] = Field(default_factory=dict)
     log_level: str = "INFO"
     log_format: Literal["json", "text"] = "json"
+    log_include_stacktrace: bool = True
     allow_test_doubles: bool = False
 
     @field_validator("mcp_servers", mode="before")
@@ -37,7 +40,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_database_auth(self) -> "Settings":
-        if self.app_env == "local" and not self.database.password:
+        if self.agent_env == "local" and not self.database.password:
             raise ValueError("database.password is required for local")
         if not self.allow_test_doubles and self.agent.model is None:
             raise ValueError("agent.model is required outside the test-double runtime")
@@ -49,6 +52,7 @@ class Settings(BaseSettings):
             ]
             if mock_servers:
                 raise ValueError(f"mock MCP servers are only allowed in tests: {', '.join(mock_servers)}")
+        self.langfuse.validate_sources(self.agent_env)
         return self
 
     @property

@@ -1,5 +1,5 @@
 """Single-root DeepAgent harness invocation and SSE event adaptation."""
-
+import json
 # 将 DeepAgents 内部事件转换为稳定 SSE 事件，避免 API 暴露框架实现细节。
 
 import uuid
@@ -12,6 +12,7 @@ from langgraph.types import Command
 from src.common.language import ResponseLanguage
 from src.agent.mock_service import MockHarnessService
 from src.database.models.agent.message import Message
+from src.observability.langfuse_observability import LangfuseObservability
 
 logger = logging.getLogger(__name__)
 
@@ -19,14 +20,21 @@ logger = logging.getLogger(__name__)
 class DeepAgentHarnessService:
     """Use one configured Agent, with a deterministic local fallback."""
 
-    def __init__(self, graph: Any | None, fallback: MockHarnessService) -> None:
+    def __init__(
+        self,
+        graph: Any | None,
+        fallback: MockHarnessService,
+        observability: LangfuseObservability | None = None,
+    ) -> None:
         self._graph = graph
         self._fallback = fallback
+        self._observability = observability
 
     async def reply(
         self,
         conversation_id: uuid.UUID,
         staff_id: str,
+        agent_run_id: uuid.UUID,
         content: str,
         history: list[Message],
         response_language: ResponseLanguage,
@@ -37,7 +45,7 @@ class DeepAgentHarnessService:
             async for event in self._fallback.reply(conversation_id, staff_id, content, history, response_language):
                 yield event
             return
-        config = {"configurable": {"thread_id": str(conversation_id)}}
+        config = self._graph_config(conversation_id, staff_id, agent_run_id)
         logger.info("agent_invocation mode=deepagent conversation_id=%s staff_id=%s", conversation_id, staff_id)
         context = {
             "staff_id": staff_id,
@@ -56,6 +64,7 @@ class DeepAgentHarnessService:
         self,
         conversation_id: uuid.UUID,
         staff_id: str,
+        agent_run_id: uuid.UUID,
         action: str,
         history: list[Message],
         response_language: ResponseLanguage,
@@ -66,7 +75,7 @@ class DeepAgentHarnessService:
             async for event in self._fallback.resume(action, history, response_language):
                 yield event
             return
-        config = {"configurable": {"thread_id": str(conversation_id)}}
+        config = self._graph_config(conversation_id, staff_id, agent_run_id)
         context = {
             "staff_id": staff_id,
             "conversation_id": str(conversation_id),
@@ -78,6 +87,19 @@ class DeepAgentHarnessService:
             decision["message"] = json.dumps(response or {}, ensure_ascii=False)
         async for event in self._stream_graph(Command(resume={"decisions": [decision]}), config, context):
             yield event
+
+    def _graph_config(self, conversation_id: uuid.UUID, staff_id: str, agent_run_id: uuid.UUID) -> dict[str, object]:
+        """Build one LangGraph config with optional per-run Langfuse callback metadata."""
+        config: dict[str, object] = {"configurable": {"thread_id": str(conversation_id)}}
+        if self._observability is not None:
+            config["callbacks"] = [self._observability.create_callback()]
+            config["metadata"] = {
+                "langfuse_session_id": str(conversation_id),
+                "langfuse_user_id": staff_id,
+                "conversation_id": str(conversation_id),
+                "agent_run_id": str(agent_run_id),
+            }
+        return config
 
     async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, str]]]:
         """将普通消息和 LangGraph HITL interrupt 统一转换为 API SSE 事件。"""

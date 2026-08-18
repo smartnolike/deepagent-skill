@@ -10,6 +10,10 @@ export AGENT_ENV=local
 YAML 可以引用启动环境变量，例如 `api_auth_token: ${API_AUTH_TOKEN}` 或 MCP header
 `Authorization: Bearer ${TICKETING_MCP_TOKEN}`。未提供且没有默认值的引用会使启动失败。
 
+日志由 `log_level`、`log_format` 和 `log_include_stacktrace` 控制。未预期异常会产生带 `error_id` 的脱敏
+结构化日志；SSE 失败事件也会返回该 `error_id`，便于按日志定位。`log_include_stacktrace: false` 可保留异常类型与
+脱敏消息，但不输出完整堆栈。
+
 应用内自定义 Tool 位于 `src/tools/`。如启用 `tools.external_status_url`，服务会复用专用的
 `src/common/httpx_client.py` 中的 `HttpxClient` 并强制以 `build/root.cer` 校验外部 API TLS 证书。该证书当前必须由部署环境
 提供有效 PEM/CA 内容；空文件或缺失文件会使启用外部 Tool 的应用启动失败。
@@ -158,6 +162,38 @@ Token 服务。`refresh_before_expiry_seconds` 必须小于 `token_ttl_seconds`�
 
 若响应字段不同，可用 `agent.token_auth.token_field` 指定。Token、密码、请求 body 和响应 body 均不会进入
 日志。配置内部动态 Token 模型时，Translator 与 ChatOpenAI 都复用 `tools.root_ca_path` 指定的根证书。
+
+## Langfuse 可选观测
+
+Langfuse 使用 `agent_env` 自动标记 Trace 的 `environment`（`local`、`dev` 或 `prod`），无需额外配置环境名。
+`release` 是可选的发布版本标签，建议在 CI/CD 设置为 Git SHA 或镜像 tag。
+
+local 可通过环境变量或未提交的 `config/local.yaml` 直接提供 Key：
+
+```yaml
+langfuse:
+  enabled: ${LANGFUSE_ENABLED:-false}
+  public_key: ${LANGFUSE_PUBLIC_KEY:-}
+  secret_key: ${LANGFUSE_SECRET_KEY:-}
+  base_url: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  release: ${RELEASE_VERSION:-}
+```
+
+dev / prod 启用时只接受 Google Secret Manager 的完整 Secret Version resource name：
+
+```yaml
+langfuse:
+  enabled: ${LANGFUSE_ENABLED:-false}
+  public_key_secret: ${LANGFUSE_PUBLIC_KEY_SECRET:-}
+  secret_key_secret: ${LANGFUSE_SECRET_KEY_SECRET:-}
+  base_url: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  release: ${RELEASE_VERSION:-}
+```
+
+服务启动时读取两个 Secret 一次并只保存在进程内；之后每次 Agent 调用复用内存 Key，不会重复访问 Secret
+Manager。启用时会采集 LangGraph、模型和 Tool 调用，并以 `conversation_id`、`agent_run_id` 与 `staff_id`
+关联 Trace。`password`、`secret`、`token` 与 `authorization` 等字段在导出前会脱敏。Langfuse 不属于
+`/health` readiness 依赖；其上报故障不应阻断聊天服务。
 
 ## 添加自定义 Tool
 

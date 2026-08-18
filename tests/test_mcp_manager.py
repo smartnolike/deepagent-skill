@@ -36,7 +36,7 @@ def _settings() -> Settings:
     """创建包含一个 HTTP MCP 的最小测试配置。"""
     return Settings.model_validate(
         {
-            "app_env": "local",
+            "agent_env": "local",
             "allow_test_doubles": True,
             "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
             "api_auth_token": "test-token",

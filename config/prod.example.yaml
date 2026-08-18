@@ -1,4 +1,4 @@
-app_env: prod
+agent_env: prod
 agent:
   provider: internal
   model: openai:gpt-5.5
@@ -20,6 +20,13 @@ database:
 api_auth_token: ${API_AUTH_TOKEN}
 log_level: INFO
 log_format: json
+log_include_stacktrace: true
+langfuse:
+  enabled: ${LANGFUSE_ENABLED:-false}
+  public_key_secret: ${LANGFUSE_PUBLIC_KEY_SECRET:-}
+  secret_key_secret: ${LANGFUSE_SECRET_KEY_SECRET:-}
+  base_url: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
+  release: ${RELEASE_VERSION:-}
 tools:
   external_status_url: null
   root_ca_path: build/root.cer

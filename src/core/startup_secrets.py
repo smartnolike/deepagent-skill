@@ -10,17 +10,25 @@ from src.core.runtime_secrets import RuntimeSecrets
 async def resolve_runtime_secrets(settings: Settings) -> RuntimeSecrets:
     """Resolve configured startup secrets once and return their in-memory container."""
     token_auth = settings.agent.token_auth
-    if token_auth is None:
-        return RuntimeSecrets()
-    if token_auth.service_account_password is not None:
-        return RuntimeSecrets(token_auth.service_account_password)
+    translator_password = token_auth.service_account_password if token_auth is not None else None
+    langfuse_public_key = settings.langfuse.public_key
+    langfuse_secret_key = settings.langfuse.secret_key
+    secret_version_names = {
+        "translator": token_auth.service_account_password_secret if token_auth is not None else None,
+        "langfuse_public": settings.langfuse.public_key_secret,
+        "langfuse_secret": settings.langfuse.secret_key_secret,
+    }
+    if not any(secret_version_names.values()):
+        return RuntimeSecrets(translator_password, langfuse_public_key, langfuse_secret_key)
 
-    secret_version_name = token_auth.service_account_password_secret
-    if secret_version_name is None:
-        raise RuntimeError("TRANSLATOR_SERVICE_ACCOUNT_PASSWORD_UNAVAILABLE")
     manager = GoogleSecretManager()
     try:
-        password = await manager.access_secret(secret_version_name)
+        if secret_version_names["translator"] is not None:
+            translator_password = await manager.access_secret(secret_version_names["translator"])
+        if secret_version_names["langfuse_public"] is not None:
+            langfuse_public_key = await manager.access_secret(secret_version_names["langfuse_public"])
+        if secret_version_names["langfuse_secret"] is not None:
+            langfuse_secret_key = await manager.access_secret(secret_version_names["langfuse_secret"])
     finally:
         await manager.close()
-    return RuntimeSecrets(password)
+    return RuntimeSecrets(translator_password, langfuse_public_key, langfuse_secret_key)

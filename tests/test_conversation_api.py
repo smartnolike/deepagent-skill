@@ -111,3 +111,25 @@ def test_explicit_memories_are_staff_isolated(client) -> None:
         {"key": "default-region", "value": {"region": "us-east1"}}
     ]
     assert client.delete("/agent/api/memories/default-region?staff_id=staff-a", headers=headers).status_code == 204
+
+
+def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None:
+    """流已经开始后发生异常也必须返回可与后端日志关联的 error_id。"""
+    headers = {"Authorization": "Bearer test-token"}
+    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
+
+    async def failing_reply(*_):
+        if False:
+            yield "token", {"content": "unused"}
+        raise RuntimeError("agent exploded")
+
+    monkeypatch.setattr(client.app.state.agent_service, "reply", failing_reply)
+    response = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "hello"},
+    )
+
+    assert "event: error" in response.text
+    assert '"code": "AGENT_ERROR"' in response.text
+    assert '"error_id":' in response.text

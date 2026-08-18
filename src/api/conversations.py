@@ -4,18 +4,22 @@
 
 import json
 import uuid
+import asyncio
+import logging
 from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import StreamingResponse
 
 from src.core.auth import require_api_token
+from src.core.request_context import bind_request_id
 from src.common.language import resolve_response_language
 from src.api.schemas.conversation_title import ConversationTitleRequest
 from src.database.session import get_db_session
 from src.services.conversation_service import ConversationService
 
 router = APIRouter(prefix="/api/conversations", dependencies=[Depends(require_api_token)])
+logger = logging.getLogger(__name__)
 
 
 def _service(request: Request, session=Depends(get_db_session)) -> ConversationService:
@@ -77,23 +81,48 @@ async def list_messages(
 
 @router.post("/{conversation_id}/messages")
 async def send_message(
-    conversation_id: uuid.UUID, payload: dict, accept_language: str | None = Header(default=None), service: ConversationService = Depends(_service)
+    conversation_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    accept_language: str | None = Header(default=None),
+    service: ConversationService = Depends(_service),
 ) -> StreamingResponse:
     response_language = resolve_response_language(payload["content"], accept_language)
+    request_id = request.state.request_id
+
     async def events() -> AsyncIterator[str]:
-        try:
-            async for event, data in service.send(conversation_id, payload["staff_id"], payload["content"], response_language):
-                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-        except Exception:
-            data = {"code": "AGENT_ERROR", "message": "Agent execution failed"}
-            yield f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        with bind_request_id(request_id):
+            try:
+                async for event, data in service.send(conversation_id, payload["staff_id"], payload["content"], response_language):
+                    yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                logger.info("sse_client_disconnected", extra={"fields": {"conversation_id": str(conversation_id)}})
+                raise
+            except Exception as exc:
+                error_id = str(uuid.uuid4())
+                logger.exception(
+                    "sse_message_stream_failed",
+                    extra={
+                        "fields": {
+                            "conversation_id": str(conversation_id),
+                            "error_id": error_id,
+                            "error_type": type(exc).__name__,
+                        }
+                    },
+                )
+                data = {"code": "AGENT_ERROR", "message": "Agent execution failed", "error_id": error_id}
+                yield f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
 
 
 @router.post("/{conversation_id}/tool-confirmations")
 async def confirm_tool(
-    conversation_id: uuid.UUID, payload: dict, accept_language: str | None = Header(default=None), service: ConversationService = Depends(_service)
+    conversation_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    accept_language: str | None = Header(default=None),
+    service: ConversationService = Depends(_service),
 ) -> StreamingResponse:
     """由会话所有者确认或取消当前暂停的 MCP Tool 调用。"""
     if payload.get("action") not in {"approve", "reject", "respond"}:
@@ -112,14 +141,31 @@ async def confirm_tool(
         raise DomainError("INVALID_FORM_NAME", "form_name must be a string", 422)
     response_language = resolve_response_language(None, accept_language)
 
+    request_id = request.state.request_id
+
     async def events() -> AsyncIterator[str]:
-        try:
-            async for event, data in service.confirm_tool(
-                conversation_id, payload["staff_id"], payload["action"], response_language, response, form_name
-            ):
-                yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
-        except Exception:
-            data = {"code": "AGENT_ERROR", "message": "Agent execution failed"}
-            yield f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        with bind_request_id(request_id):
+            try:
+                async for event, data in service.confirm_tool(
+                    conversation_id, payload["staff_id"], payload["action"], response_language, response, form_name
+                ):
+                    yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                logger.info("sse_client_disconnected", extra={"fields": {"conversation_id": str(conversation_id)}})
+                raise
+            except Exception as exc:
+                error_id = str(uuid.uuid4())
+                logger.exception(
+                    "sse_tool_confirmation_stream_failed",
+                    extra={
+                        "fields": {
+                            "conversation_id": str(conversation_id),
+                            "error_id": error_id,
+                            "error_type": type(exc).__name__,
+                        }
+                    },
+                )
+                data = {"code": "AGENT_ERROR", "message": "Agent execution failed", "error_id": error_id}
+                yield f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")

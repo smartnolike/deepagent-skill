@@ -31,6 +31,11 @@ class AgentRunRepository:
         run.error_message = error_message[:1000]
         await self._session.commit()
 
+    async def cancel(self, run: AgentRun) -> None:
+        """Mark a client-disconnected agent run without misclassifying it as a backend failure."""
+        run.status = "cancelled"
+        await self._session.commit()
+
     async def await_confirmation(self, run: AgentRun) -> None:
         """标记运行已由用户确认型 Tool 暂停。"""
         run.status = "awaiting_confirmation"

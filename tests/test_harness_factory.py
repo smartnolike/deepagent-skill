@@ -19,7 +19,7 @@ from langgraph.store.memory import InMemoryStore
 def test_factory_uses_mock_harness_without_model() -> None:
     settings = Settings.model_validate(
         {
-            "app_env": "local",
+            "agent_env": "local",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",

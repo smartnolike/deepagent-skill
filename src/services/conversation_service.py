@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 import logging
+import asyncio
 from collections.abc import AsyncIterator
 
 from fastapi import status
@@ -15,6 +16,7 @@ from src.agent.harness_service import DeepAgentHarnessService
 from src.common.language import ResponseLanguage
 from src.common.language import resolve_response_language
 from src.core.errors import DomainError
+from src.database.models.agent.agent_run import AgentRun
 from src.repositories.agent_run_repository import AgentRunRepository
 from src.repositories.conversation_repository import ConversationRepository
 from src.repositories.message_repository import MessageRepository
@@ -93,7 +95,7 @@ class ConversationService:
         answer_parts: list[str] = []
         try:
             async for event, payload in self._agent_service.reply(
-                conversation_id, staff_id, content, history, response_language
+                conversation_id, staff_id, run.id, content, history, response_language
             ):
                 if event == "token":
                     answer_parts.append(payload["content"])
@@ -106,9 +108,24 @@ class ConversationService:
             await self._runs.complete(run)
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
-        except Exception:
-            await self._runs.fail(run, "Agent execution failed")
-            logger.exception("agent_run_failed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
+        except asyncio.CancelledError:
+            await self._mark_run_cancelled(run, conversation_id)
+            raise
+        except Exception as exc:
+            error_id = str(uuid.uuid4())
+            logger.exception(
+                "agent_run_failed",
+                extra={
+                    "fields": {
+                        "agent_run_id": str(run.id),
+                        "conversation_id": str(conversation_id),
+                        "staff_id": staff_id,
+                        "error_id": error_id,
+                        "error_type": type(exc).__name__,
+                    }
+                },
+            )
+            await self._mark_run_failed(run, conversation_id, error_id)
             raise
 
     async def confirm_tool(
@@ -134,7 +151,7 @@ class ConversationService:
         answer_parts: list[str] = []
         try:
             async for event, payload in self._agent_service.resume(
-                conversation_id, staff_id, action, history, response_language, response
+                conversation_id, staff_id, run.id, action, history, response_language, response
             ):
                 if event == "token":
                     answer_parts.append(payload["content"])
@@ -145,10 +162,49 @@ class ConversationService:
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
             await self._runs.complete(run)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
-        except Exception:
-            await self._runs.fail(run, "Agent execution failed")
-            logger.exception("tool_confirmation_failed agent_run_id=%s", run.id)
+        except asyncio.CancelledError:
+            await self._mark_run_cancelled(run, conversation_id)
             raise
+        except Exception as exc:
+            error_id = str(uuid.uuid4())
+            logger.exception(
+                "tool_confirmation_failed",
+                extra={
+                    "fields": {
+                        "agent_run_id": str(run.id),
+                        "conversation_id": str(conversation_id),
+                        "staff_id": staff_id,
+                        "error_id": error_id,
+                        "error_type": type(exc).__name__,
+                    }
+                },
+            )
+            await self._mark_run_failed(run, conversation_id, error_id)
+            raise
+
+    async def _mark_run_failed(self, run: AgentRun, conversation_id: uuid.UUID, error_id: str) -> None:
+        """Persist a safe failure marker without hiding the original execution exception."""
+        try:
+            await self._runs.fail(run, f"Agent execution failed; error_id={error_id}")
+        except Exception:
+            logger.exception(
+                "agent_run_failure_persist_failed",
+                extra={"fields": {"agent_run_id": str(run.id), "conversation_id": str(conversation_id), "error_id": error_id}},
+            )
+
+    async def _mark_run_cancelled(self, run: AgentRun, conversation_id: uuid.UUID) -> None:
+        """Persist a best-effort cancellation marker after an SSE client disconnects."""
+        try:
+            await self._runs.cancel(run)
+            logger.info(
+                "agent_run_cancelled",
+                extra={"fields": {"agent_run_id": str(run.id), "conversation_id": str(conversation_id)}},
+            )
+        except Exception:
+            logger.exception(
+                "agent_run_cancellation_persist_failed",
+                extra={"fields": {"agent_run_id": str(run.id), "conversation_id": str(conversation_id)}},
+            )
 
     async def _require_conversation(
         self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage

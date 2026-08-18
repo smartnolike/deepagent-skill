@@ -12,13 +12,13 @@ from src.config.settings import Settings
 def test_local_requires_password() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
-            {"app_env": "local", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+            {"agent_env": "local", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
         )
 
 
 def test_dev_allows_no_password() -> None:
     settings = Settings.model_validate(
-        {"app_env": "dev", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        {"agent_env": "dev", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
     )
     assert settings.database.password is None
 
@@ -26,7 +26,7 @@ def test_dev_allows_no_password() -> None:
 def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None:
     settings = Settings.model_validate(
         {
-            "app_env": "local",
+            "agent_env": "local",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",
@@ -39,13 +39,13 @@ def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None
 def test_real_runtime_requires_agent_model() -> None:
     with pytest.raises(ValidationError, match="agent.model"):
         Settings.model_validate(
-            {"app_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+            {"agent_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
         )
 
 
 def test_yaml_expands_environment_references(tmp_path, monkeypatch) -> None:
     (tmp_path / "local.yaml").write_text(
-        """app_env: local
+        """agent_env: local
 allow_test_doubles: true
 database: {host: localhost, name: deepagent, user: postgres, password: "${DB_PASSWORD}"}
 api_auth_token: "${API_TOKEN:-fallback-token}"
@@ -65,11 +65,60 @@ mcp_servers:
     assert settings.mcp_servers["ticketing"].headers["Authorization"] == "Bearer mcp-secret"
 
 
+def test_local_langfuse_accepts_direct_environment_keys() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "local",
+            "allow_test_doubles": True,
+            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "langfuse": {"enabled": True, "public_key": "pk-local", "secret_key": "sk-local"},
+        }
+    )
+
+    assert settings.langfuse.enabled is True
+    assert settings.langfuse.public_key is not None
+
+
+def test_dev_langfuse_requires_secret_manager_versions() -> None:
+    with pytest.raises(ValidationError, match="dev/prod Langfuse requires"):
+        Settings.model_validate(
+            {
+                "agent_env": "dev",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "langfuse": {"enabled": True, "public_key": "pk-dev", "secret_key": "sk-dev"},
+            }
+        )
+
+
+def test_prod_langfuse_accepts_secret_manager_versions() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "prod",
+            "allow_test_doubles": True,
+            "database": {"host": "x", "name": "x", "user": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "langfuse": {
+                "enabled": True,
+                "public_key_secret": "projects/example/secrets/langfuse-public/versions/1",
+                "secret_key_secret": "projects/example/secrets/langfuse-secret/versions/1",
+            },
+        }
+    )
+
+    assert settings.langfuse.secret_key_secret is not None
+
+
 def test_dynamic_token_auth_requires_model_base_url() -> None:
     with pytest.raises(ValidationError, match="agent.base_url"):
         Settings.model_validate(
             {
-                "app_env": "local",
+                "agent_env": "local",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
                 "api_auth_token": "x",
@@ -88,7 +137,7 @@ def test_dynamic_token_auth_requires_model_base_url() -> None:
 def test_dynamic_token_auth_accepts_secret_manager_reference() -> None:
     settings = Settings.model_validate(
         {
-            "app_env": "dev",
+            "agent_env": "dev",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
             "api_auth_token": "x",
@@ -112,7 +161,7 @@ def test_dynamic_token_auth_rejects_multiple_password_sources() -> None:
     with pytest.raises(ValidationError, match="exactly one of service_account_password"):
         Settings.model_validate(
             {
-                "app_env": "dev",
+                "agent_env": "dev",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x"},
                 "api_auth_token": "x",
@@ -134,7 +183,7 @@ def test_openai_provider_rejects_internal_token_auth() -> None:
     with pytest.raises(ValidationError, match="agent.token_auth"):
         Settings.model_validate(
             {
-                "app_env": "local",
+                "agent_env": "local",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
                 "api_auth_token": "x",
@@ -155,7 +204,7 @@ def test_openai_compatible_provider_requires_base_url() -> None:
     with pytest.raises(ValidationError, match="agent.base_url"):
         Settings.model_validate(
             {
-                "app_env": "local",
+                "agent_env": "local",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
                 "api_auth_token": "x",

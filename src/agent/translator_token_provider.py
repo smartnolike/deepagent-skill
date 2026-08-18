@@ -63,7 +63,10 @@ class TranslatorTokenProvider:
             if not isinstance(token, str) or not token:
                 raise ValueError("token response does not contain a non-empty token")
         except Exception as exc:
-            logger.warning("model_token_refresh_failed error_type=%s", type(exc).__name__)
+            logger.exception(
+                "model_token_refresh_failed",
+                extra={"fields": {"error_type": type(exc).__name__}},
+            )
             raise RuntimeError("MODEL_TOKEN_UNAVAILABLE") from exc
 
         self._token = token

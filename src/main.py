@@ -13,7 +13,8 @@ from contextlib import asynccontextmanager
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request, status
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -29,6 +30,7 @@ from src.core.request_context import request_id_var
 from src.core.startup_secrets import resolve_runtime_secrets
 from src.database.engine import create_engine
 from src.mcp.manager import McpClientManager
+from src.observability.langfuse_observability import LangfuseObservability
 from src.services.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
@@ -44,6 +46,14 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         runtime_settings = configured_settings or load_settings()
         configure_logging(runtime_settings)
         app.state.runtime_secrets = await resolve_runtime_secrets(runtime_settings)
+        app.state.langfuse_observability = None
+        if runtime_settings.langfuse.enabled:
+            app.state.langfuse_observability = LangfuseObservability(
+                runtime_settings.langfuse,
+                runtime_settings.agent_env,
+                app.state.runtime_secrets,
+            )
+            logger.info("langfuse_initialized environment=%s base_url=%s", runtime_settings.agent_env, runtime_settings.langfuse.base_url)
         engine = create_async_engine(database_url, pool_pre_ping=True) if database_url else create_engine(runtime_settings)
         app.state.settings = runtime_settings
         app.state.ready = False
@@ -55,7 +65,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         if runtime_settings.tools.external_status_url is not None or runtime_settings.agent.token_auth is not None:
             app.state.httpx_client = HttpxClient(runtime_settings.tools.root_ca_path)
             logger.info("httpx_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
-        logger.info("application_resources_initializing env=%s", runtime_settings.app_env)
+        logger.info("application_resources_initializing env=%s", runtime_settings.agent_env)
         if database_url is None:
             async with create_checkpointer_context(runtime_settings) as checkpointer:
                 await checkpointer.setup()
@@ -70,6 +80,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         app.state.mcp_manager,
                         app.state.memory_service,
                         app.state.runtime_secrets,
+                        app.state.langfuse_observability,
                         app.state.httpx_client,
                         checkpointer,
                         app.state.session_factory,
@@ -82,6 +93,8 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         app.state.ready = False
                         if app.state.httpx_client is not None:
                             await app.state.httpx_client.close()
+                        if app.state.langfuse_observability is not None:
+                            await app.state.langfuse_observability.close()
                         await app.state.mcp_manager.close()
                         await engine.dispose()
         else:
@@ -94,6 +107,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 app.state.mcp_manager,
                 app.state.memory_service,
                 app.state.runtime_secrets,
+                app.state.langfuse_observability,
                 app.state.httpx_client,
                 session_factory=app.state.session_factory,
             )
@@ -105,6 +119,8 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 app.state.ready = False
                 if app.state.httpx_client is not None:
                     await app.state.httpx_client.close()
+                if app.state.langfuse_observability is not None:
+                    await app.state.langfuse_observability.close()
                 await app.state.mcp_manager.close()
                 await engine.dispose()
 
@@ -119,25 +135,69 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         return JSONResponse(content={"status": "ok"})
 
     @app.exception_handler(DomainError)
-    async def domain_error_handler(_: Request, exc: DomainError) -> JSONResponse:
+    async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        logger.warning(
+            "api_domain_error",
+            extra={"fields": {"code": exc.code, "status_code": exc.status_code, "path": request.url.path}},
+        )
         return JSONResponse(
             status_code=exc.status_code, content={"code": exc.code, "message": exc.message}
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
+        """Return a stable validation error without logging potentially sensitive request bodies."""
+        logger.warning(
+            "api_validation_failed",
+            extra={"fields": {"path": request.url.path, "error_count": len(exc.errors())}},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content={"code": "VALIDATION_ERROR", "message": "Request validation failed"},
+        )
+
+    @app.exception_handler(HTTPException)
+    async def http_error_handler(request: Request, exc: HTTPException) -> JSONResponse:
+        """Record protocol-level errors while preserving their intentional HTTP status."""
+        logger.warning(
+            "api_http_error",
+            extra={"fields": {"path": request.url.path, "status_code": exc.status_code}},
+        )
+        message = exc.detail if isinstance(exc.detail, str) else "Request failed"
+        return JSONResponse(status_code=exc.status_code, content={"code": "HTTP_ERROR", "message": message})
+
+    @app.exception_handler(Exception)
+    async def unhandled_error_handler(request: Request, _: Exception) -> JSONResponse:
+        """Log unanticipated failures with a support ID without exposing implementation details."""
+        error_id = str(uuid.uuid4())
+        logger.exception(
+            "api_unhandled_error",
+            extra={"fields": {"error_id": error_id, "method": request.method, "path": request.url.path}},
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"code": "INTERNAL_ERROR", "message": "Internal server error", "error_id": error_id},
         )
 
     @app.middleware("http")
     async def request_logging(request: Request, call_next):
         request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
         token = request_id_var.set(request_id)
+        request.state.request_id = request_id
         started = time.perf_counter()
         try:
             response = await call_next(request)
             response.headers["X-Request-ID"] = request_id
             logger.info(
-                "http_request method=%s path=%s status_code=%s duration_ms=%d",
-                request.method,
-                request.url.path,
-                response.status_code,
-                (time.perf_counter() - started) * 1000,
+                "http_request_completed",
+                extra={
+                    "fields": {
+                        "method": request.method,
+                        "path": request.url.path,
+                        "status_code": response.status_code,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
             )
             return response
         finally:

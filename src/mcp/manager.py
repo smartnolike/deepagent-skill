@@ -4,6 +4,7 @@
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 from src.config.settings import Settings
@@ -39,6 +40,7 @@ class McpClientManager:
 
     async def call_tool(self, qualified_name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Call a configured, namespaced tool and reconnect the server if needed."""
+        started = time.perf_counter()
         server_id, tool_name = qualified_name.split("__", maxsplit=1)
         server = self.server_settings.get(server_id)
         if not server or tool_name not in server.tools:
@@ -47,20 +49,34 @@ class McpClientManager:
         try:
             client = await self._get_client(server_id)
         except Exception as exc:
-            self._logger.warning(
-                "mcp_connect_failed server_id=%s tool_name=%s error_type=%s",
-                server_id,
-                tool_name,
-                type(exc).__name__,
+            self._logger.exception(
+                "mcp_connect_failed",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
             )
             raise RuntimeError("MCP_UNAVAILABLE") from exc
         try:
-            self._logger.info("mcp_tool_started server_id=%s tool_name=%s", server_id, tool_name)
+            self._logger.info("mcp_tool_started", extra={"fields": {"server_id": server_id, "tool_name": tool_name}})
             result = await client.call_tool(tool_name, arguments)
-            self._logger.info("mcp_tool_completed server_id=%s tool_name=%s", server_id, tool_name)
+            self._logger.info(
+                "mcp_tool_completed",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
             return result
         except (ConnectionError, TimeoutError):
-            self._logger.warning("mcp_tool_disconnected server_id=%s tool_name=%s", server_id, tool_name)
+            self._logger.warning("mcp_tool_disconnected", extra={"fields": {"server_id": server_id, "tool_name": tool_name}})
             await self._disconnect(server_id)
             if tool_name == "create_ticket":
                 raise RuntimeError("MCP_UNAVAILABLE")
@@ -68,15 +84,35 @@ class McpClientManager:
                 client = await self._get_client(server_id)
                 result = await client.call_tool(tool_name, arguments)
             except Exception as exc:
-                self._logger.warning(
-                    "mcp_reconnect_failed server_id=%s tool_name=%s error_type=%s",
-                    server_id,
-                    tool_name,
-                    type(exc).__name__,
+                self._logger.exception(
+                    "mcp_reconnect_failed",
+                    extra={"fields": {"server_id": server_id, "tool_name": tool_name, "error_type": type(exc).__name__}},
                 )
                 raise RuntimeError("MCP_UNAVAILABLE") from exc
-            self._logger.info("mcp_tool_completed_after_reconnect server_id=%s tool_name=%s", server_id, tool_name)
+            self._logger.info(
+                "mcp_tool_completed_after_reconnect",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
             return result
+        except Exception as exc:
+            self._logger.exception(
+                "mcp_tool_failed",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            raise RuntimeError("MCP_TOOL_FAILED") from exc
 
     async def close(self) -> None:
         """Close every active MCP client."""

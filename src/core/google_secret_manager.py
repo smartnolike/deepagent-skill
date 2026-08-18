@@ -23,10 +23,9 @@ class GoogleSecretManager:
             response = await self._client.access_secret_version(request={"name": secret_version_name})
             value = response.payload.data.decode("utf-8")
         except Exception as exc:
-            logger.warning(
-                "secret_manager_access_failed secret_version=%s error_type=%s",
-                secret_version_name,
-                type(exc).__name__,
+            logger.exception(
+                "secret_manager_access_failed",
+                extra={"fields": {"secret_version": secret_version_name, "error_type": type(exc).__name__}},
             )
             raise RuntimeError("STARTUP_SECRET_UNAVAILABLE") from exc
         if not value:

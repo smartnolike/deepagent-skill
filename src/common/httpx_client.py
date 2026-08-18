@@ -29,18 +29,35 @@ class HttpxClient:
     async def get_json(self, url: str) -> dict[str, object]:
         """执行受控 GET 请求并只返回 JSON object。"""
         started = time.perf_counter()
-        response = await self._client.get(url)
-        response.raise_for_status()
-        payload = response.json()
-        if not isinstance(payload, dict):
-            raise ValueError("External API response must be a JSON object")
-        logger.info(
-            "external_http_completed host=%s status_code=%s duration_ms=%d",
-            response.url.host,
-            response.status_code,
-            (time.perf_counter() - started) * 1000,
-        )
-        return payload
+        try:
+            response = await self._client.get(url)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("External API response must be a JSON object")
+            logger.info(
+                "external_http_completed",
+                extra={
+                    "fields": {
+                        "host": response.url.host,
+                        "status_code": response.status_code,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            return payload
+        except Exception as exc:
+            logger.exception(
+                "external_http_failed",
+                extra={
+                    "fields": {
+                        "host": httpx.URL(url).host,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            raise
 
     @property
     def async_client(self) -> httpx.AsyncClient:
@@ -52,18 +69,35 @@ class HttpxClient:
     ) -> dict[str, object]:
         """执行 JSON POST；日志不记录请求 payload、header 或响应正文。"""
         started = time.perf_counter()
-        response = await self._client.post(url, json=payload, timeout=timeout_seconds)
-        response.raise_for_status()
-        result = response.json()
-        if not isinstance(result, dict):
-            raise ValueError("External API response must be a JSON object")
-        logger.info(
-            "external_http_completed host=%s status_code=%s duration_ms=%d",
-            response.url.host,
-            response.status_code,
-            (time.perf_counter() - started) * 1000,
-        )
-        return result
+        try:
+            response = await self._client.post(url, json=payload, timeout=timeout_seconds)
+            response.raise_for_status()
+            result = response.json()
+            if not isinstance(result, dict):
+                raise ValueError("External API response must be a JSON object")
+            logger.info(
+                "external_http_completed",
+                extra={
+                    "fields": {
+                        "host": response.url.host,
+                        "status_code": response.status_code,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            return result
+        except Exception as exc:
+            logger.exception(
+                "external_http_failed",
+                extra={
+                    "fields": {
+                        "host": httpx.URL(url).host,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            raise
 
     async def close(self) -> None:
         """在应用关闭时释放 HTTP 连接池。"""

@@ -16,7 +16,7 @@ from src.main import create_app
 def client(tmp_path):
     settings = Settings.model_validate(
         {
-            "app_env": "local",
+            "agent_env": "local",
             "allow_test_doubles": True,
             "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
             "api_auth_token": "test-token",

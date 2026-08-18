@@ -40,11 +40,11 @@ def _expand_environment(value: Any) -> Any:
 
 def load_settings(config_dir: Path | None = None) -> Settings:
     """Load ``config/{AGENT_ENV}.yaml``; AGENT_ENV only selects the file."""
-    app_env = os.getenv("AGENT_ENV", "local")
+    agent_env = os.getenv("AGENT_ENV", "local")
     base_dir = config_dir or Path(__file__).resolve().parents[2] / "config"
-    config_file = base_dir / f"{app_env}.yaml"
+    config_file = base_dir / f"{agent_env}.yaml"
     if not config_file.is_file():
         raise RuntimeError(f"Missing runtime configuration file: {config_file}")
     data = _expand_environment(yaml.safe_load(config_file.read_text(encoding="utf-8")) or {})
-    logger.info("settings_loaded app_env=%s config_file=%s", app_env, config_file.name)
+    logger.info("settings_loaded agent_env=%s config_file=%s", agent_env, config_file.name)
     return Settings.model_validate(data)

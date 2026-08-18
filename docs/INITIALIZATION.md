@@ -24,7 +24,7 @@ Checkpointer：AsyncPostgresSaver → psycopg3 → PostgreSQL
 使用普通用户名密码，配置位于未提交的 `config/local.yaml`：
 
 ```yaml
-app_env: local
+agent_env: local
 database:
   host: localhost
   port: 5432
@@ -43,7 +43,7 @@ log_format: json
 应用通过 Cloud SQL Auth Proxy 连接 Cloud SQL PostgreSQL。Python 仍连接 `127.0.0.1:5432`，不集成 Cloud SQL Python Connector。Proxy 负责 Cloud SQL connectivity、TLS 与 IAM authentication；`config/dev.yaml` 与 `config/prod.yaml` 不设置数据库 password：
 
 ```yaml
-app_env: dev
+agent_env: dev
 database:
   host: 127.0.0.1
   port: 5432
@@ -100,7 +100,7 @@ README.md
 from pydantic import SecretStr
 
 class Settings(BaseSettings):
-    app_env: Literal["local", "dev", "prod"]
+    agent_env: Literal["local", "dev", "prod"]
     database: DatabaseSettings
     mcp_servers: dict[str, McpServerSettings]
     api_auth_token: SecretStr
@@ -194,16 +194,32 @@ data: {...}
 
 使用 Python 标准库 `logging`，不为 MVP 引入额外日志 SDK。应用启动时在 `src/core/logging.py` 调用一次 `configure_logging(settings)`，统一配置 stdout handler、`LOG_LEVEL` 与 `LOG_FORMAT`；业务模块只能通过 `logging.getLogger(__name__)` 获取 logger，不得自行添加 handler、改变全局日志级别或直接 `print`。
 
-`json` 格式必须输出单行 JSON，至少包含 `timestamp`、`level`、`logger`、`message`、`request_id`；`text` 格式仅供本地开发阅读，字段保持等价。`src/core/request_context.py` 使用 `contextvars` 保存当前请求上下文，HTTP middleware 为每个请求生成或接受 `X-Request-ID`，在响应中回传该 ID，并将其绑定到本请求派生的 Agent、MCP 与数据库日志。不得把 request context 保存到全局可变对象。
+`json` 格式必须输出单行 JSON，至少包含 `timestamp`、`level`、`logger`、`message`、`request_id`；`text` 格式仅供本地开发阅读，字段保持等价。`log_include_stacktrace` 控制异常 stack trace 是否输出；无论该值如何，异常日志都必须保留经脱敏的 `error.type` 和 `error.message`。`src/core/request_context.py` 使用 `contextvars` 保存当前请求上下文，HTTP middleware 为每个请求生成或接受 `X-Request-ID`，在响应中回传该 ID，并将其绑定到本请求派生的 Agent、MCP 与数据库日志。SSE generator 必须重新绑定 request context，避免流式响应生命周期丢失 request ID。不得把 request context 保存到全局可变对象。
 
 记录以下结构化事件及必要字段：
 
 - HTTP 请求结束：`method`、`path`、`status_code`、`duration_ms`、`request_id`；不记录 Authorization header、请求 body 或 SSE token 内容。
 - Conversation / Agent run：`conversation_id`、`staff_id`、`agent_run_id`、`status`、`duration_ms`；不记录用户消息或模型回复正文。
 - MCP 调用：`tool_name`、`outcome`、`duration_ms`、`request_id`；不记录未脱敏参数或完整 tool 返回。
-- 异常：使用 `logger.exception` 记录 stack trace，并仅记录经脱敏的错误摘要；不得记录密码、API token、Authorization header、完整 message 内容或敏感 MCP 参数。
+- 异常：使用 `logger.exception` 记录 stack trace，并仅记录经脱敏的错误摘要；不得记录密码、API token、Authorization header、完整 message 内容或敏感 MCP 参数。SSE 异常必须生成 `error_id`，写入日志并以稳定 `event: error` 返回客户端；客户端断连记录为 cancelled，不得误报为 Agent failed。
 
 日志只写 stdout，由 local / dev / prod 的运行平台负责采集；不创建业务日志表，也不将日志写入 PostgreSQL。`staff_id`、`conversation_id` 等标识如属于敏感数据，应遵循部署环境的日志访问控制与保留策略。
+
+### Langfuse 可选观测
+
+Langfuse 为可选观测组件，不参与 `/health` readiness。新增 `langfuse` YAML 配置：`enabled`、`base_url`、可选
+`release` 以及认证来源。Trace 的 Langfuse `environment` 必须直接使用 `settings.agent_env`，禁止再配置一套独立
+environment 值。`release` 用于 Git SHA、镜像 tag 等发布版本标记，可为空。
+
+local 在 `enabled=true` 时必须使用 `public_key` 与 `secret_key` 的直接值（通常由 YAML 的环境变量引用提供）；
+dev / prod 在 `enabled=true` 时必须使用 `public_key_secret` 与 `secret_key_secret` 的 Google
+Secret Manager 完整 Version resource name。每个 Key 只能使用一个来源。`enabled=false` 时不读取 Key 或 Secret
+Manager。Key 均使用 `SecretStr`，启动期读取一次后仅存入 RuntimeSecrets，运行期不得重复读取 Secret Manager。
+
+FastAPI lifespan 在启用时初始化 Langfuse Client；每个 Graph `astream` 调用创建独立 LangChain Callback Handler，
+并携带 `conversation_id`、`agent_run_id`、`staff_id` 和 `agent_env` metadata。Langfuse 导出前必须递归脱敏键名包含
+`password`、`secret`、`token`、`authorization` 的值。shutdown 使用有界异步方式 flush / shutdown，不得阻塞事件
+循环；Langfuse 上报失败只记录脱敏 warning，不得使 Agent Run 或服务 readiness 失败。
 
 ## 12. DeepAgent 与 Checkpointer
 
