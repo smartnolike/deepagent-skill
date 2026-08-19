@@ -44,4 +44,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.setuptools]
-packages = {find = {include = ["src*"]}}
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

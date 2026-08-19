@@ -80,7 +80,7 @@ src/
 ├── repositories/{conversation_repository.py,message_repository.py}
 ├── services/conversation_service.py
 ├── agent/{factory.py,checkpointer.py,service.py}
-├── mcp/{client.py,manager.py,tools.py}
+├── mcp_runtime/{mcp_client.py,mcp_client_manager.py,tool_registry.py}
 skill-packages/
 └── danaan-cloud-resource/SKILL.md
 alembic/
@@ -262,7 +262,7 @@ mcp_servers:
         body.creatorEmail: ""
 ```
 
-`src/mcp/manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源。FastAPI lifespan 启动时必须为每个 `enabled: true` 的 HTTP MCP 建立连接、执行 `initialize()` 和 `list_tools()`，并以服务端返回的 `name`、`description`、`inputSchema` 作为 Tool 契约。YAML 的 `tools` 仅是白名单：服务端未暴露任何白名单 Tool 时应用启动失败；`enabled: false` 的 server 不连接、不发现、也不向模型暴露 Tool。Registry 必须用真实 `inputSchema` 注册 LangChain Tool，禁止以 `**arguments` 推断通用 schema，避免将业务参数错误包装为 `{ "arguments": {...} }`。
+`src/mcp_runtime/mcp_client_manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源。该目录不能命名为 `mcp`，否则在 `src` 作为 Python 模块根目录时会遮蔽第三方 MCP SDK 的 `mcp` 包。FastAPI lifespan 启动时必须为每个 `enabled: true` 的 HTTP MCP 建立连接、执行 `initialize()` 和 `list_tools()`，并以服务端返回的 `name`、`description`、`inputSchema` 作为 Tool 契约。YAML 的 `tools` 仅是白名单：服务端未暴露任何白名单 Tool 时应用启动失败；`enabled: false` 的 server 不连接、不发现、也不向模型暴露 Tool。Registry 必须用真实 `inputSchema` 注册 LangChain Tool，禁止以 `**arguments` 推断通用 schema，避免将业务参数错误包装为 `{ "arguments": {...} }`。
 
 MCP 服务在应用启动后重启或断连时必须支持恢复：连接、transport 或超时异常将关闭并丢弃失效 client。Manager 使用每个 server 独立的 async lock 仅建立一个新 Session，重新执行 `initialize()` 与 `list_tools()`，确认白名单 Tool 仍存在后，以原始业务参数自动重试该次 Tool 调用一次；再次失败时返回受控 `MCP_UNAVAILABLE` error。当前版本对所有 MCP Tool 采用同一重试策略，暂不区分只读与写入 Tool。重连若发现 schema 变化，只记录需要重启服务的警告；运行中的 DeepAgent 保持启动时注册的 Tool 契约。成功或失败的连接、断开与重连事件必须记录 `server_id`、工具名、结果与 `duration_ms`，不记录连接凭据或业务参数。
 
@@ -330,7 +330,7 @@ response 为 `{"issued_token":"..."}`。Translator 不返回有效期，因此 T
 
 ## 自定义 Tool 与外部 HTTP
 
-应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token 和内部 ChatOpenAI 模型网关请求）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或内部动态 Token 模型时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
+应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp_runtime/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token 和内部 ChatOpenAI 模型网关请求）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或内部动态 Token 模型时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
 
 ## 长期记忆
 

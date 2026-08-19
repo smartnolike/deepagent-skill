@@ -15,18 +15,18 @@ from deepagents import (
 )
 from deepagents.backends import FilesystemBackend
 
-from src.agent.agent_context import AgentContext
-from src.agent.harness_service import DeepAgentHarnessService
-from src.agent.middleware.response_language_middleware import ResponseLanguageMiddleware
-from src.agent.model_factory import create_chat_model
-from src.common.httpx_client import HttpxClient
-from src.config.settings import Settings
-from src.core.runtime_secrets import RuntimeSecrets
-from src.mcp.manager import McpClientManager
-from src.mcp.tool_registry import McpToolRegistry
-from src.observability.langfuse_observability import LangfuseObservability
-from src.services.memory_service import MemoryService
-from src.tools.registry import CustomToolRegistry
+from agent.agent_context import AgentContext
+from agent.harness_service import DeepAgentHarnessService
+from agent.middleware.response_language_middleware import ResponseLanguageMiddleware
+from agent.model_factory import create_chat_model
+from common.httpx_client import HttpxClient
+from config.settings import Settings
+from core.runtime_secrets import RuntimeSecrets
+from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.tool_registry import McpToolRegistry
+from observability.langfuse_observability import LangfuseObservability
+from services.memory_service import MemoryService
+from tools.registry import CustomToolRegistry
 
 
 def create_agent_service(

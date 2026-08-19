@@ -9,7 +9,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.danaan.cloud_resource_template_info import CloudResourceTemplateInfo
+from database.models.danaan.cloud_resource_template_info import CloudResourceTemplateInfo
 
 logger = logging.getLogger(__name__)
 

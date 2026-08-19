@@ -9,7 +9,7 @@ from sqlalchemy import DateTime, ForeignKey, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.database.base import Base
+from database.base import Base
 
 
 class Message(Base):

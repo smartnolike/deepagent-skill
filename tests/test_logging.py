@@ -4,7 +4,7 @@ import json
 import logging
 import sys
 
-from src.core.logging import ApplicationFormatter
+from core.logging import ApplicationFormatter
 
 
 def test_json_formatter_includes_redacted_exception_stack_trace() -> None:

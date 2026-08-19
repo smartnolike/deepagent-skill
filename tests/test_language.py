@@ -2,7 +2,7 @@
 
 # 只要用户消息出现中文字符，就必须优先选择中文；否则使用英文或请求头兜底。
 
-from src.common.language import resolve_response_language
+from common.language import resolve_response_language
 
 
 def test_chinese_character_forces_chinese_response() -> None:

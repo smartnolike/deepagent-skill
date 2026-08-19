@@ -2,7 +2,7 @@
 
 # psycopg3 异步连接不兼容 ProactorEventLoop；启动器必须显式覆盖 Uvicorn 的默认选择。
 
-from src import main
+import main
 
 
 def test_windows_startup_passes_selector_loop_to_uvicorn(monkeypatch) -> None:

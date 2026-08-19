@@ -3,11 +3,11 @@
 import pytest
 from types import SimpleNamespace
 
-from src.config.settings import Settings
-from src.mcp import manager as manager_module
-from src.mcp.manager import McpClientManager
-from src.mcp.tool_definition import McpToolDefinition
-from src.mcp.tool_registry import McpToolRegistry
+from config.settings import Settings
+from mcp_runtime import mcp_client_manager as manager_module
+from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.tool_definition import McpToolDefinition
+from mcp_runtime.tool_registry import McpToolRegistry
 
 
 class FakeMcpClient:

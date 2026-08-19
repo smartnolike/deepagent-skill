@@ -10,7 +10,7 @@ from typing import Any
 from langchain_core.tools import InjectedToolArg, StructuredTool
 from langgraph.prebuilt import ToolRuntime
 
-from src.mcp.manager import McpClientManager
+from mcp_runtime.mcp_client_manager import McpClientManager
 
 
 class McpToolRegistry:

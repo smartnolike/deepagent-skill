@@ -5,8 +5,8 @@
 import pytest
 from pydantic import ValidationError
 
-from src.config.load_settings import load_settings
-from src.config.settings import Settings
+from config.load_settings import load_settings
+from config.settings import Settings
 
 
 def test_local_requires_password() -> None:

@@ -5,8 +5,8 @@
 import pytest
 from pydantic import SecretStr
 
-from src.config.settings import Settings
-from src.core import startup_secrets
+from config.settings import Settings
+from core import startup_secrets
 
 
 class FakeGoogleSecretManager:

@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy import DateTime, Integer, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from src.database.models.danaan.base import DanaanReadBase
+from database.models.danaan.base import DanaanReadBase
 
 
 class CloudResourceTemplateInfo(DanaanReadBase):

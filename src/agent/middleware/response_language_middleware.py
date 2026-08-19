@@ -8,8 +8,8 @@ from typing import Any
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import SystemMessage
 
-from src.agent.agent_context import AgentContext
-from src.common.language import ResponseLanguage
+from agent.agent_context import AgentContext
+from common.language import ResponseLanguage
 
 
 class ResponseLanguageMiddleware(AgentMiddleware):

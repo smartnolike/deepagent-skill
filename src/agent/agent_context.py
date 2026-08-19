@@ -4,7 +4,7 @@
 
 from typing import TypedDict
 
-from src.common.language import ResponseLanguage
+from common.language import ResponseLanguage
 
 
 class AgentContext(TypedDict):

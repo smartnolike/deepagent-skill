@@ -7,8 +7,8 @@ import logging
 
 from pydantic import SecretStr
 
-from src.common.httpx_client import HttpxClient
-from src.config.token_auth_settings import TokenAuthSettings
+from common.httpx_client import HttpxClient
+from config.token_auth_settings import TokenAuthSettings
 
 logger = logging.getLogger(__name__)
 

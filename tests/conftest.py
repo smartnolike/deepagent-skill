@@ -7,10 +7,10 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from src.config.settings import Settings
-from src.database.base import Base
-from src import main as main_module
-from src.main import create_app
+from config.settings import Settings
+from database.base import Base
+import main as main_module
+from main import create_app
 
 from fake_agent_service import FakeAgentService
 

@@ -7,10 +7,10 @@ import shutil
 import certifi
 import httpx
 
-from src.common.httpx_client import HttpxClient
-from src.config.tool_settings import PROJECT_ROOT, ToolSettings
-from src.tools.echo import echo_text
-from src.tools.external_status import get_configured_service_status
+from common.httpx_client import HttpxClient
+from config.tool_settings import PROJECT_ROOT, ToolSettings
+from tools.echo import echo_text
+from tools.external_status import get_configured_service_status
 
 
 async def test_external_status_tool_uses_custom_ca_and_mock_transport(tmp_path) -> None:

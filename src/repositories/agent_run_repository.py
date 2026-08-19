@@ -6,7 +6,7 @@ import uuid
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.agent.agent_run import AgentRun
+from database.models.agent.agent_run import AgentRun
 
 
 class AgentRunRepository:

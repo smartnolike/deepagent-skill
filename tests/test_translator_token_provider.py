@@ -5,8 +5,8 @@
 import pytest
 from pydantic import SecretStr
 
-from src.agent.translator_token_provider import TranslatorTokenProvider
-from src.config.token_auth_settings import TokenAuthSettings
+from agent.translator_token_provider import TranslatorTokenProvider
+from config.token_auth_settings import TokenAuthSettings
 
 
 class FakeTokenHttpxClient:

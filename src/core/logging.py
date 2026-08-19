@@ -9,8 +9,8 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from src.config.settings import Settings
-from src.core.request_context import request_id_var
+from config.settings import Settings
+from core.request_context import request_id_var
 
 
 _SENSITIVE_VALUE_PATTERN = re.compile(

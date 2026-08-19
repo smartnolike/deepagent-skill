@@ -4,16 +4,16 @@
 
 import pytest
 
-from src.agent.agent_factory import (
+from agent.agent_factory import (
     _harness_profile_key,
     _response_language_system_prompt,
     _skill_bound_system_prompt,
     create_agent_service,
 )
-from src.agent.middleware.response_language_middleware import response_language_instruction
-from src.config.settings import Settings
-from src.mcp.manager import McpClientManager
-from src.services.memory_service import MemoryService
+from agent.middleware.response_language_middleware import response_language_instruction
+from config.settings import Settings
+from mcp_runtime.mcp_client_manager import McpClientManager
+from services.memory_service import MemoryService
 from langgraph.store.memory import InMemoryStore
 
 
