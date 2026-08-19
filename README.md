@@ -79,6 +79,9 @@ POST /agent/api/conversations/{conversation_id}/tool-confirmations
 res_template_id DESC` 取最新 `template_content`。该表由 Danaan 管理，不会由本项目迁移创建；运行账号
 需要对此表的 `SELECT` 权限。最终 `danaan__external_resource_add` 仍需用户 `approve` 才会执行。
 
+`danaan__external_resource_add` 的 `creator` 不由模型或前端填写。MCP 配置会从当前运行时的 `staff_id`
+强制注入该字段，并固定注入空的 `creatorName` / `creatorEmail`；这些内部字段不会出现在 Tool schema、表单或确认摘要中。
+
 ## 模型 Provider：内部动态 Token、OpenAI 或 OpenAI-compatible 外部模型
 
 通过 `agent.provider` 选择模型来源：`internal`、`openai` 或 `openai_compatible`。认证方式互斥：

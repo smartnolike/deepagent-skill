@@ -7,7 +7,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.database.models.agent.conversation import Conversation
+from database.models.agent.conversation import Conversation
 
 
 class ConversationRepository:

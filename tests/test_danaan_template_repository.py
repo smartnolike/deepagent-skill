@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.repositories.danaan_template_repository import DanaanTemplateRepository
+from repositories.danaan_template_repository import DanaanTemplateRepository
 
 
 @pytest.mark.asyncio

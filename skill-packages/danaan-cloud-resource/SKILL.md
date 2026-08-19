@@ -49,7 +49,7 @@ test for template lookup and request construction. The template Tool is already 
 5. 只能在 Danaan 基础资料与资源申请字段都齐全后读取模板和构造申请 body。
 6. `danaan__external_resource_add` 有副作用，必须等待用户 `approve`。用户 `reject` 时不得调用、不得重试。
 7. 不记录或长期保存完整模板、数据库配置、KMS Key、IAM 列表、凭据或完整申请 body。
-8. `creator`、`creatorName`、`creatorEmail` 是系统受控字段，禁止向用户展示、询问或允许修改。
+8. `creator`、`creatorName`、`creatorEmail` 由受信任的 Tool 执行层注入；模型不得生成、展示、询问、确认、传递或尝试修改这些字段。
 
 ## Danaan 基础资料与长期记忆
 
@@ -238,21 +238,17 @@ cloudResourceName = "hsx-kkll-lll"
   "useCaseShortName": "<confirmed value>",
   "resourceOnboardRegion": "<confirmed value>",
   "resourceContent": {"<cloudResourceName>": "<unaltered template value>"},
-  "creator": "<staff_id>",
-  "creatorName": "",
-  "creatorEmail": "",
   "resourceName": "<confirmed value>",
   "cloudResourceName": "<confirmed value>",
   "justification": "<confirmed value>"
 }
 ```
 
-`creator` 必须且只能使用调用上下文提供的 `staff_id`，不能使用用户消息、表单、长期记忆或模型推断值。
-`creatorName` 与 `creatorEmail` 必须始终传空字符串 `""`，不能省略、填充、修改或从其他来源读取。这三个字段
-均为内部系统字段：不得放入任何前端表单、SSE 表单字段、自然语言追问、确认弹窗或最终用户摘要。
+`creator` 由执行层从可信调用上下文的 `staff_id` 注入；`creatorName` 与 `creatorEmail` 由执行层固定注入空字符串 `""`。
+这些字段均为内部系统字段：不得放入任何前端表单、SSE 表单字段、自然语言追问、确认弹窗、最终用户摘要或模型生成的 MCP 参数。
 
 调用最终 MCP Tool 前，必须按当前 `response_language` 向用户展示待提交内容。所有 `<>` 均替换为本次已经确认的
-实际值；不得展示 `creator`、`creatorName` 或 `creatorEmail`。英文回复必须使用下面的英文模板；中文回复使用
+实际值；不得展示任何内部身份字段。英文回复必须使用下面的英文模板；中文回复使用
 语义完全相同的中文 Markdown 模板。
 
 ````markdown

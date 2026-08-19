@@ -9,9 +9,9 @@ from typing import Any, AsyncIterator
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
 
-from src.common.language import ResponseLanguage
-from src.database.models.agent.message import Message
-from src.observability.langfuse_observability import LangfuseObservability
+from common.language import ResponseLanguage
+from database.models.agent.message import Message
+from observability.langfuse_observability import LangfuseObservability
 
 logger = logging.getLogger(__name__)
 

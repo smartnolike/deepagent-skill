@@ -4,10 +4,10 @@ import uuid
 
 from pydantic import SecretStr
 
-from src.agent.harness_service import DeepAgentHarnessService
-from src.config.langfuse_settings import LangfuseSettings
-from src.core.runtime_secrets import RuntimeSecrets
-from src.observability import langfuse_observability
+from agent.harness_service import DeepAgentHarnessService
+from config.langfuse_settings import LangfuseSettings
+from core.runtime_secrets import RuntimeSecrets
+from observability import langfuse_observability
 
 
 class FakeObservability:

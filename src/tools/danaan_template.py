@@ -6,7 +6,7 @@ import json
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from src.repositories.danaan_template_repository import DanaanTemplateRepository
+from repositories.danaan_template_repository import DanaanTemplateRepository
 
 
 async def get_danaan_resource_template(

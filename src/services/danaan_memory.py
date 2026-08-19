@@ -4,8 +4,8 @@
 
 from typing import Any
 
-from src.core.errors import DomainError
-from src.services.memory_service import MemoryService
+from core.errors import DomainError
+from services.memory_service import MemoryService
 
 DANAAN_BASE_CONTEXT_KEY = "danaan-cloud-resource:base-context"
 DANAAN_BASE_CONTEXT_FIELDS = (

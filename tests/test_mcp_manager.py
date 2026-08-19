@@ -1,12 +1,13 @@
 """MCP startup discovery and reconnect tests."""
 
 import pytest
+from types import SimpleNamespace
 
-from src.config.settings import Settings
-from src.mcp import manager as manager_module
-from src.mcp.manager import McpClientManager
-from src.mcp.tool_definition import McpToolDefinition
-from src.mcp.tool_registry import McpToolRegistry
+from config.settings import Settings
+from mcp_runtime import mcp_client_manager as manager_module
+from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.tool_definition import McpToolDefinition
+from mcp_runtime.tool_registry import McpToolRegistry
 
 
 class FakeMcpClient:
@@ -37,7 +38,27 @@ class FakeMcpClient:
                     "properties": {"query": {"type": "string"}},
                     "required": ["query"],
                 },
-            )
+            ),
+            McpToolDefinition(
+                name="external_resource_add",
+                description="Create a Danaan resource request.",
+                input_schema={
+                    "type": "object",
+                    "properties": {
+                        "body": {
+                            "type": "object",
+                            "properties": {
+                                "applicationName": {"type": "string"},
+                                "creator": {"type": "string"},
+                                "creatorName": {"type": "string"},
+                                "creatorEmail": {"type": "string"},
+                            },
+                            "required": ["applicationName", "creator", "creatorName", "creatorEmail"],
+                        }
+                    },
+                    "required": ["body"],
+                },
+            ),
         ]
 
     async def call_tool(self, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
@@ -51,7 +72,12 @@ class FakeMcpClient:
         self.close_calls += 1
 
 
-def _settings(*, tools: list[str] | None = None) -> Settings:
+def _settings(
+    *,
+    tools: list[str] | None = None,
+    context_argument_bindings: dict[str, dict[str, str]] | None = None,
+    fixed_arguments: dict[str, dict[str, str]] | None = None,
+) -> Settings:
     """Create minimal settings with one enabled HTTP MCP server."""
     return Settings.model_validate(
         {
@@ -64,6 +90,8 @@ def _settings(*, tools: list[str] | None = None) -> Settings:
                     "transport": "http",
                     "url": "https://mcp.example.internal/api",
                     "tools": tools if tools is not None else ["search"],
+                    "context_argument_bindings": context_argument_bindings or {},
+                    "fixed_arguments": fixed_arguments or {},
                 }
             },
         }
@@ -125,6 +153,52 @@ async def test_connection_failure_reconnects_and_retries_once(monkeypatch: pytes
     assert first.close_calls == 1
     assert second.connect_calls == 1
     assert second.tool_calls == [("search", {"query": "test"})]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_registry_hides_and_overrides_system_context_arguments(monkeypatch: pytest.MonkeyPatch) -> None:
+    """System identity fields must be hidden from the model and force-injected at Tool execution."""
+    FakeMcpClient.instances.clear()
+    monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+    manager = McpClientManager(
+        _settings(
+            tools=["external_resource_add"],
+            context_argument_bindings={"external_resource_add": {"body.creator": "staff_id"}},
+            fixed_arguments={
+                "external_resource_add": {
+                    "body.creatorName": "",
+                    "body.creatorEmail": "",
+                }
+            },
+        )
+    )
+    await manager.start()
+    tool = McpToolRegistry(manager).build()[0]
+
+    body_schema = tool.args_schema["properties"]["body"]
+    assert set(body_schema["properties"]) == {"applicationName"}
+    assert body_schema["required"] == ["applicationName"]
+
+    FakeMcpClient.instances[0].fail_next_tool_call = False
+    await tool.coroutine(  # type: ignore[misc]
+        runtime=SimpleNamespace(context={"staff_id": "staff-123", "conversation_id": "conversation-123"}),
+        body={"applicationName": "payments", "creator": "spoofed"},
+    )
+
+    assert FakeMcpClient.instances[0].tool_calls == [
+        (
+            "external_resource_add",
+            {
+                "body": {
+                    "applicationName": "payments",
+                    "creator": "staff-123",
+                    "creatorName": "",
+                    "creatorEmail": "",
+                }
+            },
+        )
+    ]
     await manager.close()
 
 

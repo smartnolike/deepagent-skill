@@ -10,8 +10,8 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from src.config.mcp_server_settings import McpServerSettings
-from src.mcp.tool_definition import McpToolDefinition
+from config.mcp_server_settings import McpServerSettings
+from mcp_runtime.tool_definition import McpToolDefinition
 
 
 class McpClient:

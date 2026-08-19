@@ -4,7 +4,7 @@
 
 import json
 
-from src.common.httpx_client import HttpxClient
+from common.httpx_client import HttpxClient
 
 
 async def get_configured_service_status(client: HttpxClient, url: str) -> str:

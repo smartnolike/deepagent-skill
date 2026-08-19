@@ -52,3 +52,10 @@ mcp_servers:
     reconnect_max_delay_seconds: 30
     tools: [external_resource_add]
     confirmation_required_tools: [external_resource_add]
+    context_argument_bindings:
+      external_resource_add:
+        body.creator: staff_id
+    fixed_arguments:
+      external_resource_add:
+        body.creatorName: ""
+        body.creatorEmail: ""

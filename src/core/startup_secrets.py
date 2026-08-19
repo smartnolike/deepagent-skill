@@ -2,9 +2,9 @@
 
 # 不在每次 Agent 请求或 Token 刷新中访问 Secret Manager，降低延迟与 API 调用量。
 
-from src.config.settings import Settings
-from src.core.google_secret_manager import GoogleSecretManager
-from src.core.runtime_secrets import RuntimeSecrets
+from config.settings import Settings
+from core.google_secret_manager import GoogleSecretManager
+from core.runtime_secrets import RuntimeSecrets
 
 
 async def resolve_runtime_secrets(settings: Settings) -> RuntimeSecrets:

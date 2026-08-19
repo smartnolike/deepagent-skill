@@ -9,8 +9,8 @@ from typing import Any
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
 
-from src.config.langfuse_settings import LangfuseSettings
-from src.core.runtime_secrets import RuntimeSecrets
+from config.langfuse_settings import LangfuseSettings
+from core.runtime_secrets import RuntimeSecrets
 
 _SENSITIVE_KEY_PARTS = ("api_key", "apikey", "authorization", "password", "secret", "token")
 

@@ -5,9 +5,9 @@
 import pytest
 from types import SimpleNamespace
 
-from src.agent import model_factory
-from src.agent.model_factory import create_chat_model
-from src.config.agent_settings import AgentSettings
+from agent import model_factory
+from agent.model_factory import create_chat_model
+from config.agent_settings import AgentSettings
 
 
 def test_openai_provider_uses_fixed_api_key() -> None:

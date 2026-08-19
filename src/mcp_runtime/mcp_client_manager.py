@@ -10,9 +10,9 @@ from typing import Any
 
 import httpx
 
-from src.config.settings import Settings
-from src.mcp.mcp_client import McpClient
-from src.mcp.tool_definition import McpToolDefinition
+from config.settings import Settings
+from mcp_runtime.mcp_client import McpClient
+from mcp_runtime.tool_definition import McpToolDefinition
 
 _RECONNECTABLE_ERRORS = (ConnectionError, TimeoutError, OSError, httpx.HTTPError)
 

@@ -5,10 +5,10 @@
 from langchain_openai import ChatOpenAI
 from collections.abc import Awaitable, Callable
 
-from src.agent.translator_token_provider import TranslatorTokenProvider
-from src.common.httpx_client import HttpxClient
-from src.config.agent_settings import AgentSettings
-from src.core.runtime_secrets import RuntimeSecrets
+from agent.translator_token_provider import TranslatorTokenProvider
+from common.httpx_client import HttpxClient
+from config.agent_settings import AgentSettings
+from core.runtime_secrets import RuntimeSecrets
 
 
 def create_chat_model(

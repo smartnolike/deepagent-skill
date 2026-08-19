@@ -6,7 +6,7 @@ from contextlib import AbstractAsyncContextManager
 
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-from src.config.settings import Settings
+from config.settings import Settings
 
 
 def create_checkpointer_context(settings: Settings) -> AbstractAsyncContextManager[AsyncPostgresSaver]:

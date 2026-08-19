@@ -8,6 +8,7 @@ import sys
 import time
 import uuid
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 # psycopg3 的异步连接不兼容 Windows 默认 ProactorEventLoop；必须在 Uvicorn 创建事件循环前切换。
 if sys.platform == "win32":
@@ -18,20 +19,20 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from src.agent.agent_factory import create_agent_service
-from src.agent.checkpointer import create_checkpointer_context
-from src.api.router import router
-from src.config.load_settings import load_settings
-from src.config.settings import Settings
-from src.core.errors import DomainError
-from src.common.httpx_client import HttpxClient
-from src.core.logging import configure_logging
-from src.core.request_context import request_id_var
-from src.core.startup_secrets import resolve_runtime_secrets
-from src.database.engine import create_engine
-from src.mcp.manager import McpClientManager
-from src.observability.langfuse_observability import LangfuseObservability
-from src.services.memory_service import MemoryService
+from agent.agent_factory import create_agent_service
+from agent.checkpointer import create_checkpointer_context
+from api.router import router
+from config.load_settings import load_settings
+from config.settings import Settings
+from core.errors import DomainError
+from common.httpx_client import HttpxClient
+from core.logging import configure_logging
+from core.request_context import request_id_var
+from core.startup_secrets import resolve_runtime_secrets
+from database.engine import create_engine
+from mcp_runtime.mcp_client_manager import McpClientManager
+from observability.langfuse_observability import LangfuseObservability
+from services.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,7 @@ def start_server() -> None:
         host="0.0.0.0",
         port=8000,
         loop="asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto",
-        app_dir="src",
+        app_dir=str(Path(__file__).resolve().parent),
     )
 
 
