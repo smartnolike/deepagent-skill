@@ -88,3 +88,58 @@ def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None
     assert "event: error" in response.text
     assert '"code": "AGENT_ERROR"' in response.text
     assert '"error_id":' in response.text
+
+
+def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monkeypatch) -> None:
+    """A page reload can restore the approval card and a second click cannot resume the Tool again."""
+    headers = {"Authorization": "Bearer test-token"}
+    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
+
+    async def confirmation_reply(*_):
+        yield "confirmation_required", {
+            "tool_name": "danaan__external_resource_add",
+            "description": "Review and approve this Danaan cloud resource request.",
+            "arguments": {
+                "request": {"applicationName": "payment-platform", "api_token": "must-not-persist"}
+            },
+        }
+
+    monkeypatch.setattr(client.app.state.agent_service, "reply", confirmation_reply)
+    streamed = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "Create a cloud resource"},
+    )
+    assert streamed.status_code == 200
+    assert '"confirmation_id"' in streamed.text
+    assert "must-not-persist" not in streamed.text
+
+    pending = client.get(
+        f"/agent/api/conversations/{conversation_id}/tool-confirmations?staff_id=staff-a",
+        headers=headers,
+    )
+    assert pending.status_code == 200
+    confirmation = pending.json()["items"][0]
+    assert confirmation["decision"] == "pending"
+    assert confirmation["display_arguments"]["request"]["applicationName"] == "payment-platform"
+    assert confirmation["display_arguments"]["request"]["api_token"] == "[REDACTED]"
+
+    decided = client.post(
+        f"/agent/api/conversations/{conversation_id}/tool-confirmations/{confirmation['confirmation_id']}",
+        headers=headers,
+        json={"staff_id": "staff-a", "action": "approve"},
+    )
+    assert decided.status_code == 200
+    assert "Test tool confirmation response." in decided.text
+
+    approved = client.get(
+        f"/agent/api/conversations/{conversation_id}/tool-confirmations?staff_id=staff-a&decision=approve",
+        headers=headers,
+    )
+    assert approved.json()["items"][0]["execution_status"] == "succeeded"
+    repeated = client.post(
+        f"/agent/api/conversations/{conversation_id}/tool-confirmations/{confirmation['confirmation_id']}",
+        headers=headers,
+        json={"staff_id": "staff-a", "action": "approve"},
+    )
+    assert '"code": "AGENT_ERROR"' in repeated.text

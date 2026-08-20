@@ -5,6 +5,7 @@
 import pytest
 
 from agent.agent_factory import (
+    _confirmation_description,
     _harness_profile_key,
     _response_language_system_prompt,
     _skill_bound_system_prompt,
@@ -33,6 +34,13 @@ def test_factory_requires_a_configured_model() -> None:
 def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
     assert _harness_profile_key("gpt-5.6-luna") == "openai:gpt-5.6-luna"
     assert _harness_profile_key("openai:gpt-5.6-luna") == "openai:gpt-5.6-luna"
+
+
+def test_confirmation_description_hides_mcp_implementation_details() -> None:
+    assert _confirmation_description("danaan", "external_resource_add") == (
+        "Review and approve this Danaan cloud resource request."
+    )
+    assert _confirmation_description("danaan", "search") == "Review and approve this requested action."
 
 
 def test_skill_bound_prompt_limits_the_agent_to_enabled_skills() -> None:

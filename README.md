@@ -52,16 +52,20 @@ PostgreSQL Store 的 `danaan-cloud-resource:base-context` key。下一次 Danaan
 ## 用户确认型 MCP Tool
 
 对会产生副作用的 MCP Tool，在对应 server 配置 `confirmation_required_tools`；例如示例中的
-`external_resource_add`。Agent 准备调用该 Tool 时会暂停并通过 SSE 返回 `confirmation_required`，而不会执行 Tool。
+`external_resource_add`。Agent 准备调用该 Tool 时会暂停、持久化 `ai_agent_tool_confirmation` 记录并通过 SSE 返回
+`confirmation_required`，而不会执行 Tool。SSE 包含 `confirmation_id`、脱敏后的 `display_arguments` 与当前状态；页面刷新后可用
+`GET /agent/api/conversations/{conversation_id}/tool-confirmations?staff_id=...` 恢复待审批卡片。
+
 仅会话所属的 `staff_id` 可通过以下接口继续该运行：
 
 ```text
-POST /agent/api/conversations/{conversation_id}/tool-confirmations
+POST /agent/api/conversations/{conversation_id}/tool-confirmations/{confirmation_id}
 {"staff_id":"...", "action":"approve"}  # 执行 Tool
 {"staff_id":"...", "action":"reject"}   # 取消当前 Tool，不执行
 ```
 
-确认与取消都使用相同的 `conversation_id` / LangGraph `thread_id` 恢复状态；用户离开页面后可以继续确认。
+审批记录只允许从 `pending` 决定一次，重复点击不会再次恢复或执行 Tool。确认与取消都使用相同的
+`conversation_id` / LangGraph `thread_id` 恢复状态；用户离开页面后可以继续确认。
 当前 MVP 每次暂停只处理一个需确认的 Tool 调用。
 
 ## Danaan Cloud Resource Skill

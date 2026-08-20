@@ -125,9 +125,9 @@ async def confirm_tool(
     accept_language: str | None = Header(default=None),
     service: ConversationService = Depends(_service),
 ) -> StreamingResponse:
-    """由会话所有者确认或取消当前暂停的 MCP Tool 调用。"""
-    if payload.get("action") not in {"approve", "reject", "respond"}:
-        raise DomainError("INVALID_TOOL_CONFIRMATION", "action must be approve, reject, or respond", 422)
+    """Resume a structured form interrupt; Tool approvals use the ID-specific endpoint."""
+    if payload.get("action") != "respond":
+        raise DomainError("INVALID_TOOL_CONFIRMATION", "action must be respond", 422)
     response = payload.get("response")
     if payload.get("action") == "respond" and not isinstance(response, dict):
         raise DomainError("INVALID_FORM_RESPONSE", "response must be an object when action is respond", 422)
@@ -155,6 +155,73 @@ async def confirm_tool(
                     extra={
                         "fields": {
                             "conversation_id": str(conversation_id),
+                            "error_id": error_id,
+                            "error_type": type(exc).__name__,
+                        }
+                    },
+                )
+                data = {"code": "AGENT_ERROR", "message": "Agent execution failed", "error_id": error_id}
+                yield f"event: error\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+@router.get("/{conversation_id}/tool-confirmations")
+async def list_tool_confirmations(
+    conversation_id: uuid.UUID,
+    staff_id: str,
+    decision: str | None = Query(default="pending", pattern="^(pending|approve|reject)$"),
+    accept_language: str | None = Header(default=None),
+    service: ConversationService = Depends(_service),
+) -> dict[str, list[dict[str, object]]]:
+    """Restore persisted confirmation cards after a conversation page reload."""
+    return {
+        "items": await service.tool_confirmations(
+            conversation_id,
+            staff_id,
+            resolve_response_language(None, accept_language),
+            decision,
+        )
+    }
+
+
+@router.post("/{conversation_id}/tool-confirmations/{confirmation_id}")
+async def decide_tool_confirmation(
+    conversation_id: uuid.UUID,
+    confirmation_id: uuid.UUID,
+    payload: dict,
+    request: Request,
+    accept_language: str | None = Header(default=None),
+    service: ConversationService = Depends(_service),
+) -> StreamingResponse:
+    """Approve or reject one durable Tool confirmation and resume its Agent run once."""
+    if payload.get("action") not in {"approve", "reject"}:
+        raise DomainError("INVALID_TOOL_CONFIRMATION", "action must be approve or reject", 422)
+    response_language = resolve_response_language(None, accept_language)
+    request_id = request.state.request_id
+
+    async def events() -> AsyncIterator[str]:
+        with bind_request_id(request_id):
+            try:
+                async for event, data in service.confirm_tool(
+                    conversation_id,
+                    payload["staff_id"],
+                    payload["action"],
+                    response_language,
+                    confirmation_id=confirmation_id,
+                ):
+                    yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+            except asyncio.CancelledError:
+                logger.info("sse_client_disconnected", extra={"fields": {"conversation_id": str(conversation_id)}})
+                raise
+            except Exception as exc:
+                error_id = str(uuid.uuid4())
+                logger.exception(
+                    "sse_tool_confirmation_stream_failed",
+                    extra={
+                        "fields": {
+                            "conversation_id": str(conversation_id),
+                            "confirmation_id": str(confirmation_id),
                             "error_id": error_id,
                             "error_type": type(exc).__name__,
                         }
