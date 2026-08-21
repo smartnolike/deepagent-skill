@@ -10,6 +10,8 @@ import {
   createConversation,
   listConversations,
   listMessages,
+  listPendingToolConfirmations,
+  respondToForm,
   streamMessage,
   type ChatMessage,
   type AgentActivity,
@@ -79,7 +81,12 @@ async function selectConversation(conversationId: string): Promise<void> {
   confirmation.value = undefined
   formRequest.value = undefined
   try {
-    messages.value = await listMessages(conversationId, staffId.value)
+    const [history, pendingConfirmations] = await Promise.all([
+      listMessages(conversationId, staffId.value),
+      listPendingToolConfirmations(conversationId, staffId.value),
+    ])
+    messages.value = history
+    confirmation.value = pendingConfirmations[0]
   } catch (error) {
     ElMessage.error(messageOf(error))
   }
@@ -110,12 +117,18 @@ async function send(): Promise<void> {
 
 async function resolveConfirmation(action: 'approve' | 'reject'): Promise<void> {
   if (!activeConversationId.value || !confirmation.value || loading.value) return
+  const selectedConfirmation = confirmation.value
   loading.value = true
   confirmation.value = undefined
   const assistant = createAssistantMessage()
   messages.value.push(assistant)
   try {
-    await confirmTool(activeConversationId.value, { staff_id: staffId.value, action }, (event) => handleEvent(event, assistant))
+    await confirmTool(
+      activeConversationId.value,
+      selectedConfirmation.id,
+      { staff_id: staffId.value, action },
+      (event) => handleEvent(event, assistant),
+    )
   } catch (error) {
     assistant.content = messageOf(error)
     ElMessage.error(assistant.content)
@@ -138,6 +151,10 @@ function optionLabel(option: string | { label: string; value: string }): string 
   return typeof option === 'string' ? option : option.label
 }
 
+function displayArgumentValue(value: unknown): string {
+  return typeof value === 'object' && value !== null ? JSON.stringify(value) : String(value ?? '')
+}
+
 async function submitForm(): Promise<void> {
   if (!activeConversationId.value || !formRequest.value || loading.value) return
   const submittedFormName = formRequest.value.formName
@@ -146,7 +163,7 @@ async function submitForm(): Promise<void> {
   const assistant = createAssistantMessage()
   messages.value.push(assistant)
   try {
-    await confirmTool(
+    await respondToForm(
       activeConversationId.value,
       {
         staff_id: staffId.value,
@@ -319,6 +336,11 @@ function messageOf(error: unknown): string {
         <div>
           <strong>Confirmation required</strong>
           <p>{{ confirmation.description }} ({{ confirmation.toolName }})</p>
+          <el-descriptions v-if="Object.keys(confirmation.displayArguments).length" :column="1" size="small" border>
+            <el-descriptions-item v-for="(value, key) in confirmation.displayArguments" :key="key" :label="key">
+              {{ displayArgumentValue(value) }}
+            </el-descriptions-item>
+          </el-descriptions>
         </div>
         <div>
           <el-button :disabled="loading" @click="resolveConfirmation('reject')">Cancel</el-button>

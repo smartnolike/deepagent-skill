@@ -17,13 +17,16 @@ from common.language import ResponseLanguage
 from common.language import resolve_response_language
 from core.errors import DomainError
 from database.models.agent.agent_run import AgentRun
+from database.models.agent.tool_confirmation import ToolConfirmation
 from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
 from repositories.message_repository import MessageRepository
+from repositories.tool_confirmation_repository import ToolConfirmationRepository
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
 
 logger = logging.getLogger(__name__)
+_SENSITIVE_ARGUMENT_KEY_PARTS = frozenset({"password", "secret", "token", "authorization", "credential", "api_key"})
 
 
 class ConversationService:
@@ -35,6 +38,7 @@ class ConversationService:
         self._conversations = ConversationRepository(session)
         self._messages = MessageRepository(session)
         self._runs = AgentRunRepository(session)
+        self._confirmations = ToolConfirmationRepository(session)
         self._agent_service = agent_service
         self._memory_service = memory_service
 
@@ -82,9 +86,21 @@ class ConversationService:
             for item in messages
         ]
 
+    async def tool_confirmations(
+        self,
+        conversation_id: uuid.UUID,
+        staff_id: str,
+        response_language: ResponseLanguage,
+        decision: str | None = "pending",
+    ) -> list[dict[str, object]]:
+        """Return persisted confirmation cards so a reloaded UI can restore pending approvals."""
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        confirmations = await self._confirmations.list(conversation_id, decision)
+        return [self._confirmation_payload(item) for item in confirmations]
+
     async def send(
         self, conversation_id: uuid.UUID, staff_id: str, content: str, response_language: ResponseLanguage
-    ) -> AsyncIterator[tuple[str, dict[str, str]]]:
+    ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
         user_message = await self._messages.create(conversation_id, "user", content)
         run = await self._runs.create(conversation_id, user_message.id)
@@ -99,11 +115,16 @@ class ConversationService:
             ):
                 if event == "token":
                     answer_parts.append(payload["content"])
-                yield event, payload
                 if event in {"confirmation_required", "form_required"}:
+                    if event == "confirmation_required":
+                        confirmation = await self._create_tool_confirmation(conversation_id, run, payload)
+                        payload = {key: value for key, value in payload.items() if key != "arguments"}
+                        payload = {**payload, **self._confirmation_payload(confirmation)}
                     await self._runs.await_confirmation(run)
                     logger.info("agent_run_awaiting_confirmation agent_run_id=%s", run.id)
+                    yield event, payload
                     return
+                yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
             await self._runs.complete(run)
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
@@ -136,18 +157,44 @@ class ConversationService:
         response_language: ResponseLanguage,
         response: dict[str, object] | None = None,
         form_name: str | None = None,
-    ) -> AsyncIterator[tuple[str, dict[str, str]]]:
+        confirmation_id: uuid.UUID | None = None,
+    ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """确认或取消当前会话唯一等待用户操作的 Tool。"""
         await self._require_conversation(conversation_id, staff_id, response_language)
         run = await self._runs.get_awaiting_confirmation(conversation_id)
         if run is None:
-            raise DomainError("TOOL_CONFIRMATION_NOT_FOUND", "No tool confirmation is pending", status.HTTP_409_CONFLICT)
+            raise DomainError("TOOL_CONFIRMATION_NOT_PENDING", "No tool confirmation is pending", status.HTTP_409_CONFLICT)
+        confirmation: ToolConfirmation | None = None
+        if action != "respond":
+            if confirmation_id is None:
+                raise DomainError("TOOL_CONFIRMATION_ID_REQUIRED", "confirmation_id is required", status.HTTP_422_UNPROCESSABLE_ENTITY)
+            confirmation = await self._confirmations.get(confirmation_id, conversation_id)
+            if confirmation is None:
+                raise DomainError("TOOL_CONFIRMATION_NOT_FOUND", "Tool confirmation not found", status.HTTP_404_NOT_FOUND)
+            if confirmation.decision != "pending":
+                raise DomainError(
+                    "TOOL_CONFIRMATION_ALREADY_DECIDED",
+                    "Tool confirmation has already been decided",
+                    status.HTTP_409_CONFLICT,
+                )
+            if run.id != confirmation.agent_run_id:
+                raise DomainError("TOOL_CONFIRMATION_NOT_PENDING", "Tool confirmation is no longer pending", status.HTTP_409_CONFLICT)
         history = await self._messages.list(conversation_id)
         last_user_content = next((message.content for message in reversed(history) if message.role == "user"), None)
         response_language = resolve_response_language(last_user_content, None)
         if action == "respond" and form_name == "danaan-base-context":
             await save_danaan_base_context_from_form(self._memory_service, staff_id, response)
             logger.info("danaan_base_context_saved staff_id=%s", staff_id)
+        if confirmation is not None:
+            confirmation = await self._confirmations.decide(confirmation, staff_id, action)
+        await self._runs.resume(run)
+        if confirmation is not None:
+            logger.info(
+                "tool_confirmation_decided confirmation_id=%s agent_run_id=%s action=%s",
+                confirmation.id,
+                run.id,
+                action,
+            )
         answer_parts: list[str] = []
         try:
             async for event, payload in self._agent_service.resume(
@@ -155,15 +202,26 @@ class ConversationService:
             ):
                 if event == "token":
                     answer_parts.append(payload["content"])
-                yield event, payload
                 if event in {"confirmation_required", "form_required"}:
+                    if action == "approve" and confirmation is not None:
+                        await self._confirmations.mark_succeeded(confirmation)
+                    if event == "confirmation_required":
+                        next_confirmation = await self._create_tool_confirmation(conversation_id, run, payload)
+                        payload = {key: value for key, value in payload.items() if key != "arguments"}
+                        payload = {**payload, **self._confirmation_payload(next_confirmation)}
                     await self._runs.await_confirmation(run)
+                    yield event, payload
                     return
+                yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
             await self._runs.complete(run)
+            if action == "approve" and confirmation is not None:
+                await self._confirmations.mark_succeeded(confirmation)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
         except asyncio.CancelledError:
             await self._mark_run_cancelled(run, conversation_id)
+            if action == "approve" and confirmation is not None:
+                await self._confirmations.mark_cancelled(confirmation)
             raise
         except Exception as exc:
             error_id = str(uuid.uuid4())
@@ -180,7 +238,48 @@ class ConversationService:
                 },
             )
             await self._mark_run_failed(run, conversation_id, error_id)
+            if action == "approve" and confirmation is not None:
+                await self._confirmations.mark_failed(confirmation)
             raise
+
+    async def _create_tool_confirmation(
+        self,
+        conversation_id: uuid.UUID,
+        run: AgentRun,
+        payload: dict[str, object],
+    ) -> ToolConfirmation:
+        """Persist the Agent interrupt before exposing it to the client by SSE."""
+        tool_name = str(payload.get("tool_name", "unknown"))
+        description = str(payload.get("description", "Confirm tool execution"))
+        raw_arguments = payload.get("arguments")
+        display_arguments = _redact_display_arguments(raw_arguments)
+        confirmation = await self._confirmations.create(
+            conversation_id,
+            run.id,
+            tool_name,
+            description,
+            display_arguments,
+        )
+        logger.info(
+            "tool_confirmation_created confirmation_id=%s agent_run_id=%s tool_name=%s",
+            confirmation.id,
+            run.id,
+            tool_name,
+        )
+        return confirmation
+
+    def _confirmation_payload(self, confirmation: ToolConfirmation) -> dict[str, object]:
+        """Translate the persistent approval record into the stable API card format."""
+        return {
+            "confirmation_id": str(confirmation.id),
+            "tool_name": confirmation.tool_name,
+            "description": confirmation.description,
+            "display_arguments": confirmation.display_arguments,
+            "decision": confirmation.decision,
+            "execution_status": confirmation.execution_status,
+            "created_at": confirmation.created_at.isoformat(),
+            "decided_at": confirmation.decided_at.isoformat() if confirmation.decided_at is not None else None,
+        }
 
     async def _mark_run_failed(self, run: AgentRun, conversation_id: uuid.UUID, error_id: str) -> None:
         """Persist a safe failure marker without hiding the original execution exception."""
@@ -221,3 +320,24 @@ class ConversationService:
 
     def _conversation_payload(self, conversation_id: uuid.UUID, title: str | None, created_at) -> dict[str, str | None]:
         return {"id": str(conversation_id), "title": title, "created_at": created_at.isoformat()}
+
+
+def _redact_display_arguments(value: object) -> dict[str, object]:
+    """Return JSON-safe Tool arguments while removing credential-like fields from the UI and database."""
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): _redact_display_value(str(key), item) for key, item in value.items()}
+
+
+def _redact_display_value(key: str, value: object) -> object:
+    """Recursively redact known secret-shaped argument names without altering ordinary request fields."""
+    normalized_key = key.lower().replace("-", "_")
+    if any(part in normalized_key for part in _SENSITIVE_ARGUMENT_KEY_PARTS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(child_key): _redact_display_value(str(child_key), child) for child_key, child in value.items()}
+    if isinstance(value, list):
+        return [_redact_display_value(key, item) for item in value]
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    return str(value)

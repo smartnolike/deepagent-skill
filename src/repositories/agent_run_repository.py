@@ -41,6 +41,11 @@ class AgentRunRepository:
         run.status = "awaiting_confirmation"
         await self._session.commit()
 
+    async def resume(self, run: AgentRun) -> None:
+        """Mark a confirmed run as active again before resuming LangGraph."""
+        run.status = "running"
+        await self._session.commit()
+
     async def get_awaiting_confirmation(self, conversation_id: uuid.UUID) -> AgentRun | None:
         """返回会话中唯一等待用户确认的运行。"""
         from sqlalchemy import select

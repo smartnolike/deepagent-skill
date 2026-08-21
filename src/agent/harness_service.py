@@ -131,4 +131,5 @@ class DeepAgentHarnessService:
                         yield "confirmation_required", {
                             "tool_name": tool_name,
                             "description": str(pending.get("description", "Confirm tool execution")),
+                            "arguments": pending.get("args", {}),
                         }

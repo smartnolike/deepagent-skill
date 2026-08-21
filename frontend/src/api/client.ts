@@ -22,8 +22,12 @@ export interface AgentActivity {
 }
 
 export interface ConfirmationRequest {
+  id: string
   toolName: string
   description: string
+  displayArguments: Record<string, unknown>
+  decision: 'pending' | 'approve' | 'reject'
+  executionStatus: 'not_started' | 'running' | 'succeeded' | 'failed' | 'cancelled'
 }
 
 export interface FormField {
@@ -86,6 +90,16 @@ export async function listMessages(conversationId: string, staffId: string): Pro
   }))
 }
 
+export async function listPendingToolConfirmations(
+  conversationId: string,
+  staffId: string,
+): Promise<ConfirmationRequest[]> {
+  const response = await request<{ items: Array<Record<string, unknown>> }>(
+    `/agent/api/conversations/${conversationId}/tool-confirmations?staff_id=${encodeURIComponent(staffId)}&decision=pending`,
+  )
+  return response.items.map(toConfirmationRequest)
+}
+
 export async function streamMessage(
   conversationId: string,
   payload: Record<string, string>,
@@ -100,6 +114,20 @@ export async function streamMessage(
 }
 
 export async function confirmTool(
+  conversationId: string,
+  confirmationId: string,
+  payload: Record<string, unknown>,
+  onEvent: (event: StreamEvent) => void,
+): Promise<void> {
+  const response = await fetch(`/agent/api/conversations/${conversationId}/tool-confirmations/${confirmationId}`, {
+    method: 'POST',
+    headers: headers(),
+    body: JSON.stringify(payload),
+  })
+  await readSse(response, onEvent)
+}
+
+export async function respondToForm(
   conversationId: string,
   payload: Record<string, unknown>,
   onEvent: (event: StreamEvent) => void,
@@ -140,7 +168,7 @@ function parseEvent(block: string, onEvent: (event: StreamEvent) => void): void 
   if (event === 'tool_start') onEvent({ type: 'tool_start', name: String(data.name || 'tool') })
   if (event === 'tool_end') onEvent({ type: 'tool_end', name: String(data.name || 'tool') })
   if (event === 'confirmation_required') {
-    onEvent({ type: 'confirmation_required', confirmation: { toolName: String(data.tool_name || 'tool'), description: String(data.description || 'Confirm tool execution') } })
+    onEvent({ type: 'confirmation_required', confirmation: toConfirmationRequest(data) })
   }
   if (event === 'form_required') {
     const fields = Array.isArray(data.fields) ? data.fields as FormField[] : []
@@ -156,4 +184,19 @@ function parseEvent(block: string, onEvent: (event: StreamEvent) => void): void 
   }
   if (event === 'done') onEvent({ type: 'done' })
   if (event === 'error') onEvent({ type: 'error', message: String(data.message || 'Agent execution failed') })
+}
+
+function toConfirmationRequest(data: Record<string, unknown>): ConfirmationRequest {
+  return {
+    id: String(data.confirmation_id || data.id || ''),
+    toolName: String(data.tool_name || 'tool'),
+    description: String(data.description || 'Confirm tool execution'),
+    displayArguments: data.display_arguments && typeof data.display_arguments === 'object'
+      ? data.display_arguments as Record<string, unknown>
+      : {},
+    decision: data.decision === 'approve' || data.decision === 'reject' ? data.decision : 'pending',
+    executionStatus: ['running', 'succeeded', 'failed', 'cancelled'].includes(String(data.execution_status))
+      ? String(data.execution_status) as ConfirmationRequest['executionStatus']
+      : 'not_started',
+  }
 }

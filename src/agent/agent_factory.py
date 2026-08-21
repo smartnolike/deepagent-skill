@@ -82,7 +82,7 @@ def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, ob
     rules = {
         f"{server_id}__{tool_name}": {
             "allowed_decisions": ["approve", "reject"],
-            "description": f"Confirm execution of {tool_name} on MCP server {server_id}.",
+            "description": _confirmation_description(server_id, tool_name),
         }
         for server_id, server in mcp_manager.server_settings.items()
         for tool_name in server.confirmation_required_tools
@@ -92,6 +92,13 @@ def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, ob
         "description": "Provide the requested structured form values.",
     }
     return rules
+
+
+def _confirmation_description(server_id: str, tool_name: str) -> str:
+    """Return customer-facing approval text without exposing infrastructure details."""
+    if server_id == "danaan" and tool_name == "external_resource_add":
+        return "Review and approve this Danaan cloud resource request."
+    return "Review and approve this requested action."
 
 
 def _harness_profile_key(model: str) -> str:

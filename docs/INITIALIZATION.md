@@ -76,7 +76,7 @@ src/
 ├── core/{auth.py,logging.py,request_context.py}
 ├── config/settings.py
 ├── database/{base.py,engine.py,session.py,models/}
-│   └── models/{conversation.py,message.py,agent_run.py}
+│   └── models/{conversation.py,message.py,agent_run.py,tool_confirmation.py}
 ├── repositories/{conversation_repository.py,message_repository.py}
 ├── services/conversation_service.py
 ├── agent/{factory.py,checkpointer.py,service.py}
@@ -130,6 +130,7 @@ async def get_db_session() -> AsyncIterator[AsyncSession]:
 | `ai_agent_conversation` | `id` UUID PK、`staff_id` string、`title` nullable、`created_at` timestamptz、`updated_at` timestamptz |
 | `ai_agent_message` | `id` UUID PK、`conversation_id` UUID FK、`role`、`content` text、`created_at` timestamptz |
 | `ai_agent_agent_run` | `id` UUID PK、`conversation_id` UUID FK、`user_message_id` nullable UUID、`status`、`error_message` nullable、`created_at`、`updated_at` |
+| `ai_agent_tool_confirmation` | `id` UUID PK、`conversation_id` UUID FK、`agent_run_id` UUID FK、`tool_name`、`description`、脱敏 `display_arguments`、`decision`、`execution_status`、决定人及时间戳 |
 
 `message.role` 至少支持 `user`、`assistant`、`tool`、`system`。`agent_run.status` 为 `running`、`completed` 或 `failed`。
 
@@ -278,13 +279,17 @@ DeepAgents `interrupt_on` 规则。Agent 在调用前暂停，Tool 尚未实际�
 
 ```text
 event: confirmation_required
-data: {"tool_name":"danaan__external_resource_add", "description":"Confirm resource request"}
+data: {"confirmation_id":"...", "tool_name":"danaan__external_resource_add", "description":"Confirm resource request", "display_arguments":{...}, "decision":"pending"}
 ```
 
-只有 conversation 所属的 `staff_id` 可以调用
-`POST /agent/api/conversations/{conversation_id}/tool-confirmations`。`action: approve` 用同一
+每次确认请求都必须先写入 `ai_agent_tool_confirmation`，该表是审批状态、页面刷新恢复与重复操作保护的权威来源；LangGraph
+checkpoint 仅保存暂停/恢复所需的内部状态。只有 conversation 所属的 `staff_id` 可以调用
+`POST /agent/api/conversations/{conversation_id}/tool-confirmations/{confirmation_id}`。`action: approve` 用同一
 `thread_id = conversation_id` 恢复 checkpoint 并执行 Tool；`action: reject` 用 LangGraph HITL reject 决策恢复，
-Tool 不执行，Agent 自然回复已取消。用户关闭页面时运行状态保持 `awaiting_confirmation`，之后可继续操作。
+Tool 不执行，Agent 自然回复已取消。前端可调用
+`GET /agent/api/conversations/{conversation_id}/tool-confirmations?staff_id=...&decision=pending` 恢复待审批卡片。
+审批决定从 `pending` 只能原子地提交一次，防止双击或页面重试重复执行有副作用的 Tool；原始 Tool 参数不得直接写入或回传，
+只保存和展示按敏感字段名递归脱敏后的 `display_arguments`。
 这不是多人审批：不引入审批人、转交或审批流；当前 MVP 每次只允许一个等待确认的 Tool 调用。
 
 ### Danaan Cloud Resource
