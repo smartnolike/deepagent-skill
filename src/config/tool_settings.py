@@ -14,7 +14,7 @@ class ToolSettings(BaseModel):
 
     model_config = ConfigDict(validate_default=True)
 
-    external_status_url: HttpUrl | None = None
+    danaan_json_schema_url: HttpUrl | None = None
     root_ca_path: Path = Path("build/root.cer")
 
     @field_validator("root_ca_path", mode="after")

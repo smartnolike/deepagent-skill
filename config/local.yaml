@@ -37,7 +37,8 @@ langfuse:
   base_url: ${LANGFUSE_BASE_URL:-https://cloud.langfuse.com}
   release: ${RELEASE_VERSION:-}
 tools:
-  external_status_url: null
+  # 例如：https://<host>/api/terraform/schemas；Tool 会追加 /{resourceVersion}，如 /cloudsql522。
+  danaan_json_schema_url: null
   root_ca_path: build/root.cer
 mcp_servers:
   danaan:

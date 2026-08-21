@@ -7,8 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from config.tool_settings import ToolSettings
 from common.httpx_client import HttpxClient
-from tools.echo import echo_text
-from tools.external_status import get_configured_service_status
+from tools.danaan_json_schema import get_danaan_json_schema
 from tools.danaan_template import get_danaan_resource_template
 from tools.skill_memory import create_get_skill_memory_tool
 from tools.user_form import request_user_form
@@ -31,9 +30,8 @@ class CustomToolRegistry:
         self._memory_service = memory_service
 
     def build(self) -> list[StructuredTool]:
-        """仅在外部状态 API 已显式配置时注册示例 Tool。"""
-        # 无依赖 Tool 可直接注册；依赖 HTTP client 的 Tool 则按 YAML 开关注册。
-        tools: list[StructuredTool] = [echo_text, request_user_form, create_get_skill_memory_tool(self._memory_service)]
+        """Build application Tools, registering the schema reader only when its endpoint is configured."""
+        tools: list[StructuredTool] = [request_user_form, create_get_skill_memory_tool(self._memory_service)]
         if self._session_factory is not None:
             async def get_template(resource_name: str) -> str:
                 return await get_danaan_resource_template(self._session_factory, resource_name)
@@ -45,17 +43,21 @@ class CustomToolRegistry:
                     description="Read the latest Danaan resourceContent template by resourceName.",
                 )
             )
-        if self._client is None or self._settings.external_status_url is None:
+        if self._client is None or self._settings.danaan_json_schema_url is None:
             return tools
 
-        async def invoke() -> str:
-            return await get_configured_service_status(self._client, str(self._settings.external_status_url))
+        async def invoke(resourceVersion: str) -> str:
+            return await get_danaan_json_schema(
+                self._client,
+                str(self._settings.danaan_json_schema_url),
+                resourceVersion,
+            )
 
         tools.append(
             StructuredTool.from_function(
                 coroutine=invoke,
-                name="get_configured_service_status",
-                description="Read JSON service status from the configured allowlisted external endpoint.",
+                name="danaan_json_schema",
+                description="Read the Danaan cloud-resource JSON Schema for a resourceVersion from the configured allowlisted API.",
             )
         )
         return tools

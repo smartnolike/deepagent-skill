@@ -63,7 +63,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         app.state.mcp_manager = McpClientManager(runtime_settings)
         await app.state.mcp_manager.start()
         app.state.httpx_client = None
-        if runtime_settings.tools.external_status_url is not None or runtime_settings.agent.token_auth is not None:
+        if runtime_settings.tools.danaan_json_schema_url is not None or runtime_settings.agent.token_auth is not None:
             app.state.httpx_client = HttpxClient(runtime_settings.tools.root_ca_path)
             logger.info("httpx_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
         logger.info("application_resources_initializing env=%s", runtime_settings.agent_env)

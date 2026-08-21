@@ -1,7 +1,7 @@
 ---
 name: danaan-cloud-resource
 description: 为 Danaan 管理的 Cloud Storage、BigQuery 和 Cloud SQL 创建资源申请。确认基础资料，按 resourceName 读取模板，仅替换资源名后提交经用户确认的申请。
-allowed-tools: get_skill_memory request_user_form danaan_get_resource_template danaan__external_resource_add
+allowed-tools: get_skill_memory request_user_form danaan_get_resource_template danaan_json_schema danaan__external_resource_add
 metadata:
   version: "1.2.0"
 ---
@@ -158,6 +158,18 @@ justification
 ```text
 danaan_get_resource_template(resource_name=resourceName)
 ```
+
+### 2a. 获取 Cloud SQL JSON Schema
+
+当用户申请 `Cloud SQL`，在收集 Cloud SQL 特有参数前调用：
+
+```text
+danaan_json_schema(resourceVersion="cloudsql522")
+```
+
+该 Tool 返回的 `data.schema` 是 Cloud SQL 参数的权威 JSON Schema。根据该 Schema 自然语言收集 required
+字段与用户明确需要的可选字段；不要将原始 JSON Schema 直接展示给用户。不得从 Schema 示例、default 或 description
+猜测用户未提供的业务参数。此 Tool 只读，不需要用户确认，也不替代最终 `danaan__external_resource_add` 的审批。
 
 该 Tool 返回当前 `resourceContent` 模板。若 `found` 为 false、模板为空、不是 JSON object，或模板有
 零个/多个顶层资源名键，停止流程并说明模板不可用于安全创建；不得自行补全或修复模板。

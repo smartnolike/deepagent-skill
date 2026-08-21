@@ -14,7 +14,10 @@ YAML 可以引用启动环境变量，例如 `api_auth_token: ${API_AUTH_TOKEN}`
 结构化日志；SSE 失败事件也会返回该 `error_id`，便于按日志定位。`log_include_stacktrace: false` 可保留异常类型与
 脱敏消息，但不输出完整堆栈。
 
-应用内自定义 Tool 位于 `src/tools/`。如启用 `tools.external_status_url`，服务会复用专用的
+应用内自定义 Tool 位于 `src/tools/`。如启用 `tools.danaan_json_schema_url`（例如
+`https://<host>/api/terraform/schemas`），服务会注册 `danaan_json_schema(resourceVersion)`；该 Tool 会对
+`{base_url}/{resourceVersion}` 发起受控 GET，例如 `resourceVersion=cloudsql522` 请求
+`/api/terraform/schemas/cloudsql522`。服务会复用专用的
 `src/common/httpx_client.py` 中的 `HttpxClient` 并强制以 `build/root.cer` 校验外部 API TLS 证书。该证书当前必须由部署环境
 提供有效 PEM/CA 内容；空文件或缺失文件会使启用外部 Tool 的应用启动失败。
 

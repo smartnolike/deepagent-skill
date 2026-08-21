@@ -335,7 +335,7 @@ response 为 `{"issued_token":"..."}`。Translator 不返回有效期，因此 T
 
 ## 自定义 Tool 与外部 HTTP
 
-应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp_runtime/` 的远程 MCP Tool 分层管理。示例 `get_configured_service_status` 只访问 YAML `tools.external_status_url` 指定的 allowlisted 地址，模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token 和内部 ChatOpenAI 模型网关请求）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或内部动态 Token 模型时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
+应用内自定义 Tool 放在 `src/tools/`，与 `src/mcp_runtime/` 的远程 MCP Tool 分层管理。`danaan_json_schema(resourceVersion)` 只访问 YAML `tools.danaan_json_schema_url` 指定的 allowlisted 基础地址，并将 `resourceVersion` 严格编码为单一路径段；例如基础地址为 `https://<host>/api/terraform/schemas`、参数为 `cloudsql522` 时发送 GET `/api/terraform/schemas/cloudsql522`。模型不得传入任意 URL。所有外部 HTTP 调用（包括 dynamic model token 和内部 ChatOpenAI 模型网关请求）复用 FastAPI lifespan 创建的专用 `httpx.AsyncClient`，使用 `tools.root_ca_path`（默认 `build/root.cer`）作为 TLS 根证书、禁用环境代理与重定向，并在 shutdown 关闭连接池。启用外部 Tool 或内部动态 Token 模型时，根证书缺失或为空必须启动失败；日志只记录 host、状态码和耗时，不记录 headers、token、URL query 或响应正文。
 
 ## 长期记忆
 
