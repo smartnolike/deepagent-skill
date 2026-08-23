@@ -1,5 +1,7 @@
 # Skill 脚本执行与 Sandbox 设计
 
+> 关联设计：若目标是“安装的 Skill 在会话工作区中自行执行脚本”的 Copilot 式体验，请使用 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。本文的推荐 Job 路线仍适用于固定、强业务语义且不应向模型开放任意 shell 的脚本。
+
 > 状态：设计提案。当前项目尚未实现脚本执行器、GKE Job 或 DeepAgent SandboxBackend。
 
 ## 目标

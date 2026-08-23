@@ -102,12 +102,13 @@ class ConversationService:
         self, conversation_id: uuid.UUID, staff_id: str, content: str, response_language: ResponseLanguage
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
+        previous_history = await self._messages.list(conversation_id)
+        previous_language = _language_from_history(previous_history)
+        response_language = resolve_response_language(content, previous_language=previous_language)
         user_message = await self._messages.create(conversation_id, "user", content)
         run = await self._runs.create(conversation_id, user_message.id)
         logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
         history = await self._messages.list(conversation_id)
-        last_user_content = next((message.content for message in reversed(history) if message.role == "user"), None)
-        response_language = resolve_response_language(last_user_content, None)
         answer_parts: list[str] = []
         try:
             async for event, payload in self._agent_service.reply(
@@ -180,8 +181,7 @@ class ConversationService:
             if run.id != confirmation.agent_run_id:
                 raise DomainError("TOOL_CONFIRMATION_NOT_PENDING", "Tool confirmation is no longer pending", status.HTTP_409_CONFLICT)
         history = await self._messages.list(conversation_id)
-        last_user_content = next((message.content for message in reversed(history) if message.role == "user"), None)
-        response_language = resolve_response_language(last_user_content, None)
+        response_language = _language_from_history(history) or response_language
         if action == "respond" and form_name == "danaan-base-context":
             await save_danaan_base_context_from_form(self._memory_service, staff_id, response)
             logger.info("danaan_base_context_saved staff_id=%s", staff_id)
@@ -341,3 +341,12 @@ def _redact_display_value(key: str, value: object) -> object:
     if value is None or isinstance(value, str | int | float | bool):
         return value
     return str(value)
+
+
+def _language_from_history(messages: list[object]) -> ResponseLanguage | None:
+    """Find the active user language while letting technical-value turns inherit it."""
+    language: ResponseLanguage | None = None
+    for message in messages:
+        if getattr(message, "role", None) == "user":
+            language = resolve_response_language(getattr(message, "content", None), previous_language=language)
+    return language

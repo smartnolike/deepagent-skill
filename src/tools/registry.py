@@ -46,7 +46,7 @@ class CustomToolRegistry:
         if self._client is None or self._settings.danaan_json_schema_url is None:
             return tools
 
-        async def invoke(resourceVersion: str) -> str:
+        async def invoke_danaan_json_schema(resourceVersion: str) -> str:
             return await get_danaan_json_schema(
                 self._client,
                 str(self._settings.danaan_json_schema_url),
@@ -55,7 +55,7 @@ class CustomToolRegistry:
 
         tools.append(
             StructuredTool.from_function(
-                coroutine=invoke,
+                coroutine=invoke_danaan_json_schema,
                 name="danaan_json_schema",
                 description="Read the Danaan cloud-resource JSON Schema for a resourceVersion from the configured allowlisted API.",
             )
