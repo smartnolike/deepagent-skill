@@ -24,7 +24,7 @@ async def get_danaan_json_schema(client: HttpxClient, base_url: str, resourceVer
             extra={
                 "fields": {
                     "reason": "resource_version_too_long",
-                    "resource_version_length": len(normalized_version),
+                    "resource_version": normalized_version,
                 }
             },
         )
@@ -34,7 +34,7 @@ async def get_danaan_json_schema(client: HttpxClient, base_url: str, resourceVer
     started = time.perf_counter()
     logger.info(
         "danaan_json_schema_requested",
-        extra={"fields": {"resource_version_length": len(normalized_version)}},
+        extra={"fields": {"resource_version": normalized_version}},
     )
     try:
         result = await client.get_json(url)
@@ -43,7 +43,7 @@ async def get_danaan_json_schema(client: HttpxClient, base_url: str, resourceVer
             "danaan_json_schema_failed",
             extra={
                 "fields": {
-                    "resource_version_length": len(normalized_version),
+                    "resource_version": normalized_version,
                     "error_type": type(exc).__name__,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
@@ -54,7 +54,8 @@ async def get_danaan_json_schema(client: HttpxClient, base_url: str, resourceVer
         "danaan_json_schema_completed",
         extra={
             "fields": {
-                "resource_version_length": len(normalized_version),
+                "resource_version": normalized_version,
+                "result": result,
                 "duration_ms": int((time.perf_counter() - started) * 1000),
             }
         },

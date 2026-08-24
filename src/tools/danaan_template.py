@@ -20,7 +20,7 @@ async def get_danaan_resource_template(
     started = time.perf_counter()
     logger.info(
         "danaan_resource_template_requested",
-        extra={"fields": {"resource_name_length": len(resource_name)}},
+        extra={"fields": {"resource_name": resource_name}},
     )
     try:
         async with session_factory() as session:
@@ -30,7 +30,7 @@ async def get_danaan_resource_template(
             "danaan_resource_template_failed",
             extra={
                 "fields": {
-                    "resource_name_length": len(resource_name),
+                    "resource_name": resource_name,
                     "error_type": type(exc).__name__,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
@@ -41,8 +41,12 @@ async def get_danaan_resource_template(
         "danaan_resource_template_completed",
         extra={
             "fields": {
-                "resource_name_length": len(resource_name),
-                "found": template is not None,
+                "resource_name": resource_name,
+                "result": {
+                    "found": template is not None,
+                    "resource_name": resource_name,
+                    "resource_content": template,
+                },
                 "duration_ms": int((time.perf_counter() - started) * 1000),
             }
         },

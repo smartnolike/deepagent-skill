@@ -53,11 +53,7 @@ class McpClientManager:
         try:
             for server_id in enabled_servers:
                 await self._connect_and_discover(server_id, startup=True)
-        except Exception as exc:
-            logger.exception(
-                "mcp_manager_startup_failed",
-                extra={"fields": {"error_type": type(exc).__name__}},
-            )
+        except Exception:
             await self.close()
             raise
         logger.info(
@@ -87,13 +83,34 @@ class McpClientManager:
                 }
             },
         )
-        client = self._client_for(server_id)
+        try:
+            client = self._client_for(server_id)
+        except ConnectionError as exc:
+            logger.exception(
+                "mcp_tool_client_unavailable",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "error_type": type(exc).__name__,
+                    }
+                },
+            )
+            raise RuntimeError("MCP_UNAVAILABLE") from exc
         try:
             result = await client.call_tool(tool_name, arguments)
         except _RECONNECTABLE_ERRORS as exc:
-            logger.warning(
+            logger.exception(
                 "mcp_tool_connection_failed_reconnecting",
-                extra={"fields": {"server_id": server_id, "tool_name": tool_name, "error_type": type(exc).__name__}},
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "error_type": type(exc).__name__,
+                    }
+                },
             )
             try:
                 await self._reconnect(server_id, client)
@@ -148,7 +165,7 @@ class McpClientManager:
             try:
                 await client.close()
             except Exception as exc:
-                logger.warning(
+                logger.exception(
                     "mcp_client_close_failed",
                     extra={"fields": {"error_type": type(exc).__name__}},
                 )
@@ -162,7 +179,6 @@ class McpClientManager:
         """Return the established client or surface a controlled availability error."""
         client = self._clients.get(server_id)
         if client is None:
-            logger.warning("mcp_client_unavailable", extra={"fields": {"server_id": server_id}})
             raise ConnectionError(f"MCP client is unavailable: {server_id}")
         return client
 
@@ -213,7 +229,7 @@ class McpClientManager:
             try:
                 await client.close()
             except Exception as close_exc:
-                logger.warning(
+                logger.exception(
                     "mcp_failed_client_close_failed",
                     extra={"fields": {"server_id": server_id, "error_type": type(close_exc).__name__}},
                 )
@@ -255,7 +271,7 @@ class McpClientManager:
             try:
                 await client.close()
             except Exception as exc:
-                logger.warning(
+                logger.exception(
                     "mcp_client_disconnect_failed",
                     extra={"fields": {"server_id": server_id, "error_type": type(exc).__name__}},
                 )

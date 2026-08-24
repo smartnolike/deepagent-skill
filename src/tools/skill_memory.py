@@ -43,18 +43,19 @@ def create_get_skill_memory_tool(memory_service: MemoryService) -> StructuredToo
                 },
             )
             raise
+        result = {"found": value is not None, "key": key, "value": value}
         logger.info(
             "skill_memory_read",
             extra={
                 "fields": {
                     "staff_id": staff_id,
                     "memory_key": key,
-                    "found": value is not None,
+                    "result": result,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
             },
         )
-        return json.dumps({"found": value is not None, "key": key, "value": value}, ensure_ascii=False)
+        return json.dumps(result, ensure_ascii=False)
 
     return StructuredTool.from_function(
         coroutine=get_skill_memory,

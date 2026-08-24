@@ -15,15 +15,17 @@ async def request_user_form(
     form_name: str, title: str, fields: list[dict[str, Any]], prefilled_values: dict[str, Any]
 ) -> str:
     """请求用户在前端完成表单；仅传递展示定义，不校验或保存业务参数。"""
-    _ = title
+    result = "The user form request must be handled by the client."
     logger.warning(
         "user_form_tool_executed_without_interrupt",
         extra={
             "fields": {
                 "form_name": form_name,
-                "field_count": len(fields),
-                "prefilled_value_count": len(prefilled_values),
+                "title": title,
+                "fields": fields,
+                "prefilled_values": prefilled_values,
+                "result": result,
             }
         },
     )
-    return "The user form request must be handled by the client."
+    return result
