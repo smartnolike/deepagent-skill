@@ -16,6 +16,7 @@ from core.request_context import request_id_var
 _SENSITIVE_VALUE_PATTERN = re.compile(
     r"(?i)(api[_-]?key|authorization|password|secret|token)(\s*[=:]\s*)([^\s,;]+)"
 )
+_SENSITIVE_KEY_PARTS = ("apikey", "authorization", "cookie", "password", "secret", "token")
 
 
 class ApplicationFormatter(logging.Formatter):
@@ -64,8 +65,10 @@ def _redact_value(value: Any) -> Any:
     """Mask nested credential-like fields before they reach any log formatter output."""
     if isinstance(value, dict):
         return {
-            key: "***"
-            if any(part in str(key).lower() for part in ("api_key", "authorization", "password", "secret", "token"))
+            key: _redact_headers(item)
+            if _is_header_container_key(key)
+            else "***"
+            if _is_sensitive_key(key)
             else _redact_value(item)
             for key, item in value.items()
         }
@@ -76,6 +79,24 @@ def _redact_value(value: Any) -> Any:
     if isinstance(value, str):
         return _redact_text(value)
     return value
+
+
+def _is_sensitive_key(key: object) -> bool:
+    """Recognize common credential field names across snake_case and HTTP-style keys."""
+    normalized = re.sub(r"[_-]", "", str(key).lower())
+    return any(part in normalized for part in _SENSITIVE_KEY_PARTS)
+
+
+def _is_header_container_key(key: object) -> bool:
+    """Recognize a mapping that contains HTTP headers without exposing their values."""
+    return "header" in re.sub(r"[_-]", "", str(key).lower())
+
+
+def _redact_headers(value: Any) -> Any:
+    """Retain diagnostic headers while masking only credential-bearing header values."""
+    if isinstance(value, dict):
+        return {key: "***" if _is_sensitive_key(key) else _redact_value(item) for key, item in value.items()}
+    return "***"
 
 
 def _redact_text(value: str) -> str:

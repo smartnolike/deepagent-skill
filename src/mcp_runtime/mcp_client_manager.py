@@ -43,12 +43,21 @@ class McpClientManager:
 
     async def start(self) -> None:
         """Connect every enabled server and discover its real, allowlisted Tool schemas."""
-        for server_id in self.server_settings:
+        enabled_servers = self.server_settings
+        self._logger.info(
+            "mcp_manager_starting",
+            extra={"fields": {"server_count": len(enabled_servers)}},
+        )
+        for server_id in enabled_servers:
             self._locks[server_id] = asyncio.Lock()
         try:
-            for server_id in self.server_settings:
+            for server_id in enabled_servers:
                 await self._connect_and_discover(server_id, startup=True)
-        except Exception:
+        except Exception as exc:
+            self._logger.exception(
+                "mcp_manager_startup_failed",
+                extra={"fields": {"error_type": type(exc).__name__}},
+            )
             await self.close()
             raise
         self._logger.info(
@@ -68,6 +77,16 @@ class McpClientManager:
         if not self._is_allowlisted_tool(server_id, tool_name):
             self._logger.warning("mcp_tool_rejected server_id=%s tool_name=%s", server_id, tool_name)
             raise RuntimeError("MCP_UNAVAILABLE")
+        self._logger.info(
+            "mcp_tool_started",
+            extra={
+                "fields": {
+                    "server_id": server_id,
+                    "tool_name": tool_name,
+                    "arguments": arguments,
+                }
+            },
+        )
         client = self._client_for(server_id)
         try:
             result = await client.call_tool(tool_name, arguments)
@@ -84,9 +103,10 @@ class McpClientManager:
                     "mcp_tool_retry_failed",
                     extra={
                         "fields": {
-                            "server_id": server_id,
-                            "tool_name": tool_name,
-                            "error_type": type(retry_exc).__name__,
+                        "server_id": server_id,
+                        "tool_name": tool_name,
+                        "arguments": arguments,
+                        "error_type": type(retry_exc).__name__,
                             "duration_ms": int((time.perf_counter() - started) * 1000),
                         }
                     },
@@ -99,6 +119,7 @@ class McpClientManager:
                     "fields": {
                         "server_id": server_id,
                         "tool_name": tool_name,
+                        "arguments": arguments,
                         "error_type": type(exc).__name__,
                         "duration_ms": int((time.perf_counter() - started) * 1000),
                     }
@@ -111,6 +132,8 @@ class McpClientManager:
                 "fields": {
                     "server_id": server_id,
                     "tool_name": tool_name,
+                    "arguments": arguments,
+                    "result": result,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
             },
@@ -122,8 +145,14 @@ class McpClientManager:
         clients = list(self._clients.values())
         self._clients.clear()
         for client in clients:
-            await client.close()
-        self._logger.info("mcp_manager_closed")
+            try:
+                await client.close()
+            except Exception as exc:
+                self._logger.warning(
+                    "mcp_client_close_failed",
+                    extra={"fields": {"error_type": type(exc).__name__}},
+                )
+        self._logger.info("mcp_manager_closed", extra={"fields": {"client_count": len(clients)}})
 
     def _is_allowlisted_tool(self, server_id: str, tool_name: str) -> bool:
         """Ensure only startup-discovered Tool names can be called."""
@@ -133,6 +162,7 @@ class McpClientManager:
         """Return the established client or surface a controlled availability error."""
         client = self._clients.get(server_id)
         if client is None:
+            self._logger.warning("mcp_client_unavailable", extra={"fields": {"server_id": server_id}})
             raise ConnectionError(f"MCP client is unavailable: {server_id}")
         return client
 
@@ -142,7 +172,12 @@ class McpClientManager:
         async with lock:
             # 其他协程可能已经成功替换了相同的失效 Session；此时复用新连接即可。
             if self._clients.get(server_id) is not failed_client:
+                self._logger.info(
+                    "mcp_reconnect_skipped_client_already_replaced",
+                    extra={"fields": {"server_id": server_id}},
+                )
                 return
+            self._logger.info("mcp_reconnecting", extra={"fields": {"server_id": server_id}})
             await self._disconnect(server_id)
             await self._connect_and_discover(server_id, startup=False)
 
@@ -163,8 +198,25 @@ class McpClientManager:
             else:
                 self._tool_definitions[server_id] = allowlisted
             self._clients[server_id] = client
-        except Exception:
-            await client.close()
+        except Exception as exc:
+            self._logger.exception(
+                "mcp_connection_or_discovery_failed",
+                extra={
+                    "fields": {
+                        "server_id": server_id,
+                        "startup": startup,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            try:
+                await client.close()
+            except Exception as close_exc:
+                self._logger.warning(
+                    "mcp_failed_client_close_failed",
+                    extra={"fields": {"server_id": server_id, "error_type": type(close_exc).__name__}},
+                )
             raise
         self._logger.info(
             "mcp_connected_and_discovered",
@@ -200,4 +252,12 @@ class McpClientManager:
         """Discard and close one failed MCP client."""
         client = self._clients.pop(server_id, None)
         if client is not None:
-            await client.close()
+            try:
+                await client.close()
+            except Exception as exc:
+                self._logger.warning(
+                    "mcp_client_disconnect_failed",
+                    extra={"fields": {"server_id": server_id, "error_type": type(exc).__name__}},
+                )
+                raise
+            self._logger.info("mcp_client_disconnected", extra={"fields": {"server_id": server_id}})
