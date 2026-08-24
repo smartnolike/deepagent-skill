@@ -1,4 +1,4 @@
-"""Small stdout logging setup."""
+"""Application stdout logging configuration."""
 
 # 日志只写 stdout 交由部署平台采集，格式化器不会主动序列化请求体或密钥。
 
