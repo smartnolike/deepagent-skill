@@ -20,7 +20,7 @@ dev/prod DeepAgent API（位于 GKE）
   → gVisor Sandbox Pod
 ```
 
-GKE Agent Sandbox 负责 Sandbox Controller、Claim、Template 和 WarmPool 的运行时能力；`langchain-kubernetes[agent-sandbox]` 负责把 DeepAgents 的 sandbox backend 调用映射到这套基础设施。更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
+GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；`langchain-kubernetes[agent-sandbox]` 负责把 DeepAgents 的 sandbox backend 调用映射到这套基础设施。Sandbox Router 是可选的访问层：local tunnel、Gateway 或依赖 Router 的适配器需要它；应用通过 Google SDK 在同集群直接连接 Sandbox Pod 时不需要它。更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
 
 ## 2. 官方资料
 
@@ -99,6 +99,15 @@ kubectl get nodes -l sandbox.gke.io/runtime=gvisor
 ```
 
 如果 RuntimeClass 或节点标签缺失，停止后续操作，先按 [GKE Sandbox 排障与配置](https://cloud.google.com/kubernetes-engine/docs/how-to/sandbox-pods) 修复。
+
+启用的是 GKE 托管 add-on 时，Google 管理 Agent Sandbox Controller、CRD 的升级和安全补丁。**不要**再应用开源项目的 `sandbox-with-extensions.yaml`、`sandbox.yaml` 或 `extensions.yaml`；那些仅用于 kind 或其他非 GKE 托管集群。可验证 CRD 已由 add-on 提供：
+
+```bash
+kubectl get crd | rg 'agents.x-k8s.io'
+kubectl api-resources | rg 'sandbox'
+```
+
+Sandbox Router 不属于上述托管 Controller/CRD 生命周期。只有使用 local tunnel、Gateway，或所选 DeepAgents 适配器要求 Router 时，才按第 7 节部署。
 
 ## 5. 创建隔离 namespace 和基础护栏
 
@@ -216,9 +225,11 @@ kubectl get pods -n "$SANDBOX_NAMESPACE" -w
 
 CRD `apiVersion`、WarmPool 字段和官方 runtime 镜像会随 Agent Sandbox 版本演进；部署时以当前官方示例为准，不要混用不同版本的 CRD manifest。
 
-## 7. 部署 Sandbox Router
+## 7. 按需部署 Sandbox Router
 
-Sandbox Router 是 client 与 sandbox Pod 的稳定通信入口。使用 Google 提供的 Router manifest 作为起点，部署为 ClusterIP；不要将 Router 公开到互联网。
+Sandbox Router 是 client 与 sandbox Pod 的稳定通信入口，但**不是创建 Template/WarmPool 的前提**。Google 官方开发示例使用 Router 配合 `kubectl port-forward`；集群内控制器应用若使用 `SandboxInClusterConnectionConfig` 可直接访问 Sandbox Pod，不必部署 Router。
+
+当 local 开发需要 tunnel、集群外需要 Gateway，或使用的 DeepAgents 适配器要求 Router 时，使用 Google 提供的 Router manifest 作为起点，部署为 ClusterIP；不要将 Router 公开到互联网。
 
 ```text
 官方部署示例：

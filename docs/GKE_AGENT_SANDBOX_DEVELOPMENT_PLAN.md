@@ -27,9 +27,9 @@ conversation_id / LangGraph thread_id
 
 | 组件 | 职责 |
 | --- | --- |
-| GKE Agent Sandbox | Controller、CRD、Router、Template、Claim、WarmPool 等基础设施 |
+| GKE Agent Sandbox add-on | Google 托管的 Controller、CRD、Template、Claim、WarmPool 能力 |
 | GKE Sandbox / gVisor | Sandbox Pod 的运行时隔离 |
-| `k8s-agent-sandbox` | 与 GKE Agent Sandbox 通讯的 Python SDK |
+| `k8s-agent-sandbox` | 与 GKE Agent Sandbox 通讯的 Python SDK；同集群可直接连接 Sandbox Pod |
 | `langchain-kubernetes` | DeepAgents sandbox backend 适配器 |
 | `KubernetesSandboxManager` | 以 LangGraph thread 为单位创建、重连和回收 sandbox |
 
@@ -78,15 +78,18 @@ prod FastAPI（在 prod GKE）
 
 具体部署命令、Template/Router 验证和环境交付清单见 [GKE Agent Sandbox 部署手册](GKE_AGENT_SANDBOX_DEPLOYMENT_GUIDE.md)。本节说明架构约束，部署时以该手册和 Google 官方文档为准。
 
+在 GKE 版本暂不满足要求时，可先按 [本地 kind + Agent Sandbox PoC 手册](LOCAL_KIND_AGENT_SANDBOX_POC.md) 验证 Controller、Router、自建 runtime 镜像和 Skill 脚本执行链路。
+
 按 dev、再 prod 的顺序执行：
 
 1. 启用 GKE Agent Sandbox，建立 gVisor 专用节点池；
-2. 部署/启用 Agent Sandbox Controller、CRD 和 Sandbox Router；
-3. 创建 `agent-sandbox-dev` 或 `agent-sandbox-prod` namespace；
-4. 应用 Pod Security `restricted`、ResourceQuota、LimitRange 和默认拒绝 egress 的 NetworkPolicy；
-5. 配置 Agent API ServiceAccount，使其仅能管理本 namespace 的 sandbox 资源；
-6. 为需要 Google Cloud API 的特定 Skill 使用最小权限 Workload Identity，不使用 JSON key；
-7. 创建 `SandboxTemplate` 和 `SandboxWarmPool`。dev 起始维持 1--2 个 warm sandbox，prod 根据压测扩容。
+2. 验证 add-on 已提供 Controller 和 CRD；不要在 GKE 上额外应用开源 Controller/CRD release manifest；
+3. 按连接模式决定是否部署 Sandbox Router：local tunnel、Gateway 或采用依赖 Router 的适配器时需要；应用使用 SDK in-cluster direct 连接 Sandbox Pod 时不需要；
+4. 创建 `agent-sandbox-dev` 或 `agent-sandbox-prod` namespace；
+5. 应用 Pod Security `restricted`、ResourceQuota、LimitRange 和默认拒绝 egress 的 NetworkPolicy；
+6. 配置 Agent API ServiceAccount，使其仅能管理本 namespace 的 sandbox 资源；
+7. 为需要 Google Cloud API 的特定 Skill 使用最小权限 Workload Identity，不使用 JSON key；
+8. 创建 `SandboxTemplate` 和 `SandboxWarmPool`。dev 起始维持 1--2 个 warm sandbox，prod 根据压测扩容。
 
 模板必须固定镜像、资源和安全上下文：
 
@@ -239,7 +242,7 @@ TTL 后删除 sandbox；同一会话后续请求创建新 sandbox。新 sandbox 
 
 ### Milestone 1：dev GKE 基础设施
 
-- 完成 Controller、Router、gVisor Template、WarmPool、RBAC 和 NetworkPolicy；
+- 验证 add-on 管理的 Controller/CRD，并完成 Router、gVisor Template、WarmPool、RBAC 和 NetworkPolicy；
 - 验收：开发机创建 sandbox、`python --version` 成功、RuntimeClass 为 `gvisor`，且不能访问公网和 Kubernetes API。
 
 ### Milestone 2：独立兼容性 Spike
