@@ -193,7 +193,7 @@ data: {...}
 
 ## 11. 日志架构
 
-使用 Python 标准库 `logging`，不为 MVP 引入额外日志 SDK。应用启动时在 `src/core/logging.py` 调用一次 `configure_logging(settings)`，统一配置 stdout handler、`LOG_LEVEL` 与 `LOG_FORMAT`；业务模块只能通过 `logging.getLogger(__name__)` 获取 logger，不得自行添加 handler、改变全局日志级别或直接 `print`。
+使用 Python 标准库 `logging`，不为 MVP 引入额外日志 SDK。应用启动时在 `src/core/logging_config.py` 调用一次 `configure_logging(settings)`，统一配置 stdout handler、`LOG_LEVEL` 与 `LOG_FORMAT`；业务模块只能通过 `logging.getLogger(__name__)` 获取 logger，不得自行添加 handler、改变全局日志级别或直接 `print`。
 
 `json` 格式必须输出单行 JSON，至少包含 `timestamp`、`level`、`logger`、`message`、`request_id`；`text` 格式仅供本地开发阅读，字段保持等价。`log_include_stacktrace` 控制异常 stack trace 是否输出；无论该值如何，异常日志都必须保留经脱敏的 `error.type` 和 `error.message`。`src/core/request_context.py` 使用 `contextvars` 保存当前请求上下文，HTTP middleware 为每个请求生成或接受 `X-Request-ID`，在响应中回传该 ID，并将其绑定到本请求派生的 Agent、MCP 与数据库日志。SSE generator 必须重新绑定 request context，避免流式响应生命周期丢失 request ID。不得把 request context 保存到全局可变对象。
 

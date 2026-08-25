@@ -4,6 +4,7 @@
 
 import json
 import logging
+import time
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import StructuredTool
@@ -23,12 +24,38 @@ def create_get_skill_memory_tool(memory_service: MemoryService) -> StructuredToo
     async def get_skill_memory(key: str, runtime: ToolRuntime[AgentContext]) -> str:
         """Read one allowlisted memory value for the current staff member only."""
         if key not in ALLOWED_SKILL_MEMORY_KEYS:
-            logger.warning("skill_memory_access_denied key=%s", key)
+            logger.warning("skill_memory_access_denied", extra={"fields": {"memory_key": key}})
             return json.dumps({"found": False, "key": key, "error": "memory key is not allowed"})
         staff_id = runtime.context["staff_id"]
-        value = await memory_service.get(staff_id, key)
-        logger.info("skill_memory_read staff_id=%s memory_key=%s found=%s", staff_id, key, value is not None)
-        return json.dumps({"found": value is not None, "key": key, "value": value}, ensure_ascii=False)
+        started = time.perf_counter()
+        try:
+            value = await memory_service.get(staff_id, key)
+        except Exception as exc:
+            logger.exception(
+                "skill_memory_read_failed",
+                extra={
+                    "fields": {
+                        "staff_id": staff_id,
+                        "memory_key": key,
+                        "error_type": type(exc).__name__,
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                    }
+                },
+            )
+            raise
+        result = {"found": value is not None, "key": key, "value": value}
+        logger.info(
+            "skill_memory_read",
+            extra={
+                "fields": {
+                    "staff_id": staff_id,
+                    "memory_key": key,
+                    "result": result,
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                }
+            },
+        )
+        return json.dumps(result, ensure_ascii=False)
 
     return StructuredTool.from_function(
         coroutine=get_skill_memory,

@@ -26,7 +26,7 @@ from config.load_settings import load_settings
 from config.settings import Settings
 from core.errors import DomainError
 from common.httpx_client import HttpxClient
-from core.logging import configure_logging
+from core.logging_config import configure_logging
 from core.request_context import request_id_var
 from core.startup_secrets import resolve_runtime_secrets
 from database.engine import create_engine
