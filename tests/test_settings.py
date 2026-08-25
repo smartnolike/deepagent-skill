@@ -23,6 +23,79 @@ def test_dev_allows_no_password() -> None:
     assert settings.database.password is None
 
 
+def test_local_shell_rejects_execution_without_human_confirmation() -> None:
+    with pytest.raises(ValidationError, match="local_shell requires execute_requires_confirmation"):
+        Settings.model_validate(
+            {
+                "agent_env": "local",
+                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "sandbox": {
+                    "provider": "local_shell",
+                    "allow_agent_shell": True,
+                    "execute_requires_confirmation": False,
+                },
+            }
+        )
+
+
+def test_gke_agent_requires_connection_settings() -> None:
+    with pytest.raises(ValidationError, match="sandbox.gke is required"):
+        Settings.model_validate(
+            {
+                "agent_env": "dev",
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "sandbox": {"provider": "gke_agent"},
+            }
+        )
+
+
+def test_gke_agent_requires_a_warm_pool() -> None:
+    with pytest.raises(ValidationError, match="warm_pool_name"):
+        Settings.model_validate(
+            {
+                "agent_env": "dev",
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": "x",
+                "mcp_servers": {},
+                "sandbox": {
+                    "provider": "gke_agent",
+                    "gke": {
+                        "namespace": "agent-sandbox",
+                        "template_name": "deepagent-runtime",
+                        "router_url": "http://sandbox-router:8080",
+                    },
+                },
+            }
+        )
+
+
+def test_gke_tunnel_does_not_require_a_router_url() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "local",
+            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "sandbox": {
+                "provider": "gke_agent",
+                "gke": {
+                    "namespace": "agent-sandbox",
+                    "template_name": "deepagent-runtime",
+                    "warm_pool_name": "deepagent-runtime-pool",
+                    "connection_mode": "tunnel",
+                },
+            },
+        }
+    )
+
+    assert settings.sandbox.gke is not None
+    assert settings.sandbox.gke.router_url is None
+
+
 def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None:
     settings = Settings.model_validate(
         {

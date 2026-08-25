@@ -1,243 +1,287 @@
-# 本地 kind + Agent Sandbox PoC 手册
+# Windows Docker Desktop + kind 本地 Sandbox 手册
 
-> 目的：在 GKE Agent Sandbox 尚不可用前，于本机 Docker 中运行 kind，验证 Agent Sandbox Controller、CRD、Router、Python runtime 镜像和 Skill 脚本执行的完整链路。
+> 目标：在 Windows 本机运行本项目的 FastAPI/DeepAgent，在 Docker Desktop 的 kind 集群中运行 Agent Sandbox。Skill 的脚本实际在 kind 的 Sandbox Pod 内执行，而非在 Windows 主机执行。
 
-> 这是一份开发 PoC 手册，不是生产部署手册。生产路径见 [GKE Agent Sandbox 部署手册](GKE_AGENT_SANDBOX_DEPLOYMENT_GUIDE.md)。
+> 本手册是本地集成测试方案，不是 GKE 部署方案。kind 使用开源 `kubernetes-sigs/agent-sandbox` Controller；**不要**在 kind 中尝试启用 GKE add-on。GKE 路径见 [GKE Agent Sandbox 部署手册](GKE_AGENT_SANDBOX_DEPLOYMENT_GUIDE.md)。
 
-## 1. 先理解四个独立组件
-
-```text
-本机 Docker Desktop
-└─ kind Kubernetes 集群
-   ├─ Agent Sandbox Controller + CRD + extensions   # 集群级安装
-   ├─ Sandbox Router                                # 集群内 Deployment/Service
-   └─ Sandbox Pod
-      └─ Custom Python Runtime Image                # 每个 sandbox 使用的容器镜像
-         ├─ /execute HTTP server
-         ├─ Python 和依赖
-         └─ Skill scripts
-```
-
-Controller、CRD 和 Router **不能安装进 Python 镜像**。普通 `python:3.12-slim` 也不能直接作为 runtime，因为 Router 需要调用 runtime 暴露的命令执行 HTTP API。
-
-官方 Python Runtime Sandbox 是一个 FastAPI server，提供 `/execute`：输入 command，返回 `stdout`、`stderr` 和 `exit_code`。源码位于 [Agent Sandbox Python runtime 示例](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/python-runtime-sandbox)。
-
-## 2. 路线选择
-
-本 PoC 使用“自建镜像，但继承官方 runtime”的方式：
+## 1. 最终架构
 
 ```text
-官方 runtime 示例源码
-  → 构建 deepagent/python-runtime:local
-  → 继承该镜像，加入本项目 Skill scripts 和依赖
-  → 构建 deepagent/skill-sandbox:local
-  → kind load docker-image
+Windows PowerShell
+├─ 本项目 FastAPI / DeepAgent
+│  └─ langchain-kubernetes（connection_mode=tunnel）
+│     └─ kubectl port-forward（由依赖自动管理）
+│        └─ kind 内 Sandbox Router Service :8080
+│           └─ Sandbox Pod 的 runtime :38087
+│              └─ /workspace/skills/<skill>/scripts/*.py
+└─ Docker Desktop
+   └─ kind cluster
+      ├─ Agent Sandbox Controller + CRD
+      ├─ Sandbox Router
+      ├─ SandboxTemplate
+      └─ SandboxWarmPool
 ```
 
-这意味着你不依赖官方预构建镜像，但保留 `/execute` 协议兼容性。不要用普通 Python 镜像替换 runtime，除非你自行实现并测试相同的执行 API。
+端口职责必须区分：
 
-## 3. 前置条件
+| 组件 | 端口 | 配置位置 |
+| --- | ---: | --- |
+| Router Service | `8080` | Router manifest；本地 tunnel 的目标 |
+| Python runtime | `38087` | SandboxTemplate 的 `containerPort`、probe 与应用 `runtime_port` |
+| 本项目 API | `8000` | Windows 上运行的 FastAPI 服务 |
 
-- Docker Desktop 正在运行；
-- `kind` >= 0.20；
-- `kubectl` >= 1.28；
-- Python 3.12；
+不要把某个 Sandbox Pod 的 IP 或 Pod DNS 填进项目配置；Pod 会由 WarmPool/Claim 生命周期替换。
+
+## 2. 何时用 LocalShell，何时用 kind
+
+| 模式 | 启动方式 | 命令实际执行位置 | 用途 |
+| --- | --- | --- | --- |
+| 快速脚本调试 | 默认 | Windows 主机 | 仅调试已信任的脚本；每条命令要求人工确认 |
+| kind 集成测试 | `SANDBOX_PROVIDER=gke_agent` | kind Sandbox Pod | 验证 Controller、Router、镜像、依赖、Skill 脚本和 DeepAgent 调用链 |
+
+`LocalShellBackend` 没有隔离。要验证真实隔离与镜像依赖，使用本手册的 kind 模式。
+
+## 3. Windows 前置条件
+
+### 3.1 Docker Desktop
+
+安装并启动 Docker Desktop，确认它使用 **Linux containers** 和 WSL 2 backend。Docker Desktop 建议至少分配 8 GB 内存、4 个 CPU；WarmPool 会持续运行 Pod。
+
+在 PowerShell 执行：
+
+```powershell
+docker version
+docker info --format '{{.OSType}}'
+```
+
+第二条应输出 `linux`。不是时，先在 Docker Desktop 切换到 Linux containers 并重启。
+
+### 3.2 工具
+
+需要以下命令在 PowerShell 的 `PATH` 中：
+
+- `kind` 0.20 或更新版本；
+- `kubectl` 1.28 或更新版本；
 - Git；
-- 至少 8 GB Docker 可用内存；
-- 不在生产 kubecontext 上执行以下命令。
+- Python 3.12 与本项目的 `uv` 环境；
+- 本项目已执行 `uv sync`。
+
+如果使用 WinGet，可先搜索和安装；公司设备的安装策略以 IT 要求为准：
+
+```powershell
+winget search kind
+winget search kubectl
+winget search Git
+winget search uv
+```
 
 检查：
 
-```bash
-docker version
+```powershell
 kind version
 kubectl version --client
+git --version
+uv --version
+```
+
+官方基础要求和组件说明见 [Agent Sandbox quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/README.md)。
+
+## 4. 定义本地变量
+
+打开 **PowerShell**，进入项目根目录。以下变量仅在当前 PowerShell 窗口有效：
+
+```powershell
+$ProjectRoot = (Get-Location).Path
+$KindCluster = 'deepagent-sandbox'
+$SandboxNamespace = 'agent-sandbox'
+$ControllerNamespace = 'agent-sandbox-system'
+$TemplateName = 'deepagent-skill-runtime'
+$WarmPoolName = 'deepagent-skill-runtime-pool'
+$RuntimePort = 38087
+$RouterImage = 'deepagent/sandbox-router:kind'
+$RuntimeImage = 'deepagent/skill-runtime:kind'
+$AgentSandboxVersion = 'v0.5.6'
+$PocRoot = Join-Path $env:TEMP 'deepagent-agent-sandbox-poc'
+$UpstreamRoot = Join-Path $PocRoot 'agent-sandbox'
+```
+
+> `v0.5.6` 与当前项目锁定的 `k8s-agent-sandbox==0.5.6` 对齐。升级时要同时验证 Controller、Router、SDK、CRD API version 与 `langchain-kubernetes` 的兼容性，不能只升级其中一个。
+
+## 5. 创建 kind 集群
+
+先检查当前 context，避免误操作公司或云端集群：
+
+```powershell
 kubectl config current-context
+kind get clusters
 ```
 
-## 4. 下载并固定 Agent Sandbox 源码版本
+创建集群：
 
-在项目外创建一个临时工作目录，避免把上游源码提交到本仓库：
-
-```bash
-export POC_ROOT="$(mktemp -d)"
-export AGENT_SANDBOX_VERSION="v0.5.6"
-export AGENT_SANDBOX_PY_VERSION="0.5.6"
-export KIND_CLUSTER_NAME="deepagent-sandbox-poc"
-export SANDBOX_NAMESPACE="agent-sandbox-local"
-export RUNTIME_IMAGE="deepagent/python-runtime:local"
-export SKILL_IMAGE="deepagent/skill-sandbox:local"
-export ROUTER_IMAGE="deepagent/sandbox-router:local"
-
-git clone --branch "$AGENT_SANDBOX_VERSION" --depth 1 \
-  https://github.com/kubernetes-sigs/agent-sandbox.git \
-  "$POC_ROOT/agent-sandbox"
+```powershell
+kind create cluster --name $KindCluster
+kubectl config use-context "kind-$KindCluster"
+kubectl cluster-info
+kubectl get nodes
 ```
 
-执行前应将 `AGENT_SANDBOX_VERSION` 更新为你测试当日的稳定 release，并让 Controller、Python SDK、Router 和 runtime 都使用同一 release。release 列表见 [Agent Sandbox releases](https://github.com/kubernetes-sigs/agent-sandbox/releases)。
+### 5.1 gVisor：推荐，但可分两阶段完成
 
-## 5. 创建 kind 集群和 gVisor
+普通 kind 只适合验证 Controller、Router 与 runtime 协议，不具备 gVisor 隔离结论。
 
-Agent Sandbox 的基础 quickstart 默认创建不带容器运行时隔离的 kind 集群。要验证接近 GKE 的运行时隔离，必须**先**按官方 [gVisor on kind quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/gvisor.md) 配置 gVisor，然后再安装 Controller。
+要尽量接近 GKE，按官方 [gVisor on kind quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/gvisor.md) 创建/改造集群，然后返回本手册第 6 步。该流程与 kind node 镜像版本相关，必须以官方当日步骤为准，不要手写猜测的 containerd 配置。
 
-完成 gVisor quickstart 后，确认：
+完成后确认 RuntimeClass：
 
-```bash
-kubectl config use-context "kind-$KIND_CLUSTER_NAME"
+```powershell
 kubectl get runtimeclass
 ```
 
-期望存在可用于 Template 的 gVisor RuntimeClass。若 quickstart 创建的名称不是 `gvisor`，后文 Template 的 `runtimeClassName` 必须替换为实际名称。
+后文 manifest 中的 `runtimeClassName: gvisor` 必须与实际 RuntimeClass 名字一致。若还未完成 gVisor，先删除该行进行功能 PoC，**不得**把这类 PoC 当成隔离安全验证。
 
-> 若你只是先验证 Controller/Router/runtime 协议，可暂时使用普通 kind；但这不能验证 gVisor 隔离，也不能作为安全结论。
+## 6. 下载上游源码并安装开源 Controller/CRD
 
-## 6. 安装 Controller、CRD 与 extensions
+```powershell
+New-Item -ItemType Directory -Force $PocRoot | Out-Null
+if (Test-Path $UpstreamRoot) { Remove-Item -Recurse -Force $UpstreamRoot }
+git clone --branch $AgentSandboxVersion --depth 1 `
+  https://github.com/kubernetes-sigs/agent-sandbox.git $UpstreamRoot
 
-这些是集群级资源，安装一次即可。extensions 包含 `SandboxTemplate`、`SandboxClaim` 与 `SandboxWarmPool` 能力，Python SDK 需要它们。
+kubectl apply -f "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AgentSandboxVersion/sandbox-with-extensions.yaml"
+kubectl wait --for=condition=Ready pod -l app=agent-sandbox-controller `
+  -n $ControllerNamespace --timeout=180s
 
-```bash
-kubectl apply -f \
-  "https://github.com/kubernetes-sigs/agent-sandbox/releases/download/$AGENT_SANDBOX_VERSION/sandbox-with-extensions.yaml"
-
-kubectl wait --for=condition=Ready pod \
-  -l app=agent-sandbox-controller \
-  -n agent-sandbox-system \
-  --timeout=180s
-
-kubectl get crd | rg 'agents.x-k8s.io'
-kubectl get pods -n agent-sandbox-system
+kubectl get crd | Select-String 'agents.x-k8s.io'
+kubectl get pods -n $ControllerNamespace
 ```
 
-如果你希望分别控制 core 与 extensions，也可依次应用同一 release 的 `sandbox.yaml` 和 `extensions.yaml`。安装顺序和说明见 [官方 quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/README.md)。
+`SandboxTemplate`、`SandboxClaim` 和 `SandboxWarmPool` 来自 extensions；缺少它们时，后续 WarmPool 无法创建。
 
-## 7. 构建 runtime 镜像和自定义 Skill 镜像
+如果 `kubectl wait` 超时，先执行：
 
-### 7.1 构建官方 runtime 示例
-
-```bash
-docker build \
-  -t "$RUNTIME_IMAGE" \
-  "$POC_ROOT/agent-sandbox/examples/python-runtime-sandbox"
+```powershell
+kubectl get pods -n $ControllerNamespace
+kubectl get events -n $ControllerNamespace --sort-by='.lastTimestamp'
+kubectl logs -n $ControllerNamespace -l app=agent-sandbox-controller --tail=200
 ```
 
-这一步构建的是官方示例中的 `/execute` server；它不是 Controller，也不是 Router。
+## 7. 构建并导入 Router 镜像
 
-### 7.2 在本项目创建 PoC Dockerfile
+Router 是独立集群组件，不在 Python runtime 镜像中。
 
-创建目录 `sandbox-poc/`（仅用于本地 PoC；正式引入时再决定最终目录）并添加：
+```powershell
+$RouterSource = Join-Path $UpstreamRoot 'clients/python/agentic-sandbox-client/sandbox-router'
+docker build -t $RouterImage $RouterSource
+kind load docker-image $RouterImage --name $KindCluster
+```
 
-```dockerfile
-# sandbox-poc/Dockerfile
-FROM deepagent/python-runtime:local
+上游 Router manifest 使用的是 release 内的真实字段。先查看，确认 `image:` 与 `imagePullPolicy` 的写法：
 
-# 基础 runtime 的启动命令与 /execute server 保持不变。
-# 仅增加 Skill 代码和构建时依赖。
-USER root
-COPY sandbox-poc/requirements-sandbox.lock /tmp/requirements-sandbox.lock
-RUN pip install --no-cache-dir -r /tmp/requirements-sandbox.lock
-COPY skill-packages /workspace/skills
+```powershell
+$RouterManifestPath = Join-Path $RouterSource 'sandbox_router.yaml'
+Get-Content $RouterManifestPath
+```
 
-# 运行时 UID 必须与官方 runtime 的非 root 用户一致；
-# 构建后用 `docker image inspect` 和 `docker run --rm ... id` 核验。
+将 manifest 复制到临时目录后，替换镜像并设置 `imagePullPolicy: Never`（镜像已由 `kind load` 导入，不能让 kind 再到远端拉取）：
+
+```powershell
+$RouterManifest = Get-Content $RouterManifestPath -Raw
+$RouterManifest = $RouterManifest.Replace('${ROUTER_IMAGE}', $RouterImage)
+$RouterManifest = $RouterManifest -replace '# imagePullPolicy: Never', 'imagePullPolicy: Never'
+$RouterManifest | kubectl apply -n $ControllerNamespace -f -
+
+kubectl wait --for=condition=Available deployment -l app=sandbox-router `
+  -n $ControllerNamespace --timeout=180s
+kubectl get deployment,service -n $ControllerNamespace -l app=sandbox-router
+```
+
+Router Service 应保持 `ClusterIP`。本机的 tunnel 会访问它；不要为了本地测试创建公网 LoadBalancer 或 Ingress。
+
+## 8. 构建 runtime 镜像（端口 38087、包含 Skill）
+
+官方 Python runtime 示例默认监听 `8888`。本项目配置为 `38087`，因此本地也必须构建监听 `38087` 的兼容 runtime。
+
+### 8.1 准备 build context
+
+```powershell
+$RuntimeContext = Join-Path $PocRoot 'runtime-context'
+if (Test-Path $RuntimeContext) { Remove-Item -Recurse -Force $RuntimeContext }
+New-Item -ItemType Directory -Force $RuntimeContext | Out-Null
+
+Copy-Item "$UpstreamRoot/examples/python-runtime-sandbox/*" $RuntimeContext -Recurse
+Copy-Item "$ProjectRoot/skill-packages" "$RuntimeContext/skills" -Recurse
+```
+
+修改 `Dockerfile`：在原官方 runtime 的基础上，加入脚本目录、常用只读命令，并将全部 `8888` 改为 `38087`。以下命令生成可审查的 Dockerfile：
+
+```powershell
+$Dockerfile = @'
+FROM python:3.14-slim
+
+WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libgomp1 bash coreutils findutils grep \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+
+COPY main.py .
+COPY skills /workspace/skills
+RUN chown -R 1000:1000 /app /workspace/skills
 USER 1000
+
+EXPOSE 38087
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "38087", "--log-level", "trace"]
+'@
+Set-Content -Path (Join-Path $RuntimeContext 'Dockerfile') -Value $Dockerfile -NoNewline
+
+docker build -t $RuntimeImage $RuntimeContext
+docker run --rm --entrypoint id $RuntimeImage
+kind load docker-image $RuntimeImage --name $KindCluster
 ```
 
-为 PoC 创建一个最小 lock 文件，例如：
+最后一条 `id` 必须显示非 root UID（官方示例为 `1000`）。`ls` 与 `grep` 是操作系统命令，不受 Python runtime 限制；是否可用取决于镜像内是否安装，本 Dockerfile 已显式安装。
 
-```text
-# sandbox-poc/requirements-sandbox.lock
-# 本次 smoke test 无额外依赖
-```
-
-构建前将该文件放到 Docker build context 根目录。若当前项目还没有可执行 Skill，先新增一个只读 `sandbox-smoke` Skill，其脚本只输出 Python 版本和固定 JSON。
-
-构建：
-
-```bash
-docker build \
-  -f sandbox-poc/Dockerfile \
-  -t "$SKILL_IMAGE" \
-  .
-
-docker run --rm --entrypoint id "$SKILL_IMAGE"
-```
-
-如果上游 runtime 的实际非 root UID 不是 `1000`，更新 Dockerfile 最后一行；不要为了省事让 SandboxTemplate 以 root 运行。
-
-### 7.3 将本地镜像导入 kind
-
-```bash
-kind load docker-image "$RUNTIME_IMAGE" --name "$KIND_CLUSTER_NAME"
-kind load docker-image "$SKILL_IMAGE" --name "$KIND_CLUSTER_NAME"
-```
-
-local 镜像仅存在于 Docker Desktop 和 kind node 内；不会自动上传到任何远端 registry。
-
-## 8. 构建并部署 Sandbox Router
-
-Router 是 SDK 与 sandbox runtime 的 HTTP 代理，单独运行在集群中。
-
-```bash
-docker build \
-  -t "$ROUTER_IMAGE" \
-  "$POC_ROOT/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router"
-
-kind load docker-image "$ROUTER_IMAGE" --name "$KIND_CLUSTER_NAME"
-```
-
-上游 Router manifest 使用环境变量引用镜像。先阅读并确认本 release 的 manifest，再部署：
-
-```bash
-sed -n '1,260p' \
-  "$POC_ROOT/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml"
-
-ROUTER_IMAGE="$ROUTER_IMAGE" envsubst '${ROUTER_IMAGE}' \
-  < "$POC_ROOT/agent-sandbox/clients/python/agentic-sandbox-client/sandbox-router/sandbox_router.yaml" \
-  | kubectl apply -n agent-sandbox-system -f -
-
-kubectl wait --for=condition=Available deployment \
-  -l app=sandbox-router \
-  -n agent-sandbox-system \
-  --timeout=180s
-kubectl get service -n agent-sandbox-system sandbox-router-svc
-```
-
-如果该 release 的 manifest 不使用 `${ROUTER_IMAGE}`，不要靠猜测替换；复制 manifest 到 PoC 目录，显式替换其 `image:` 值并设置 `imagePullPolicy: IfNotPresent` 或 `Never`，再 apply。
+Skill 目前只有 `SKILL.md` 而没有脚本时，先不要测试某个业务脚本；第 10 步可先执行 `python -c`，确认链路后再添加 `skill-packages/<skill>/scripts/*.py` 并重建镜像。
 
 ## 9. 创建 Template 和 WarmPool
 
-```bash
-kubectl create namespace "$SANDBOX_NAMESPACE"
+创建 namespace：
+
+```powershell
+kubectl create namespace $SandboxNamespace
 ```
 
-将以下保存为 `sandbox-poc/template-and-pool.yaml`。`runtimeClassName` 仅在第 5 步完成 gVisor 配置时保留；普通 kind PoC 删除该行。
+创建 `$PocRoot/template-and-pool.yaml`：
 
-```yaml
+```powershell
+$TemplateManifest = @"
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxTemplate
 metadata:
-  name: deepagent-python
-  namespace: agent-sandbox-local
+  name: $TemplateName
+  namespace: $SandboxNamespace
 spec:
   podTemplate:
     spec:
+      # 完成第 5.1 的 gVisor 后保留；否则删除这行仅做功能 PoC。
       runtimeClassName: gvisor
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
-        seccompProfile:
-          type: RuntimeDefault
       containers:
-        - name: runtime
-          image: deepagent/skill-sandbox:local
-          imagePullPolicy: IfNotPresent
+        - name: python-runtime
+          image: $RuntimeImage
+          imagePullPolicy: Never
           ports:
-            - containerPort: 8888
+            - containerPort: $RuntimePort
           readinessProbe:
             httpGet:
               path: /
-              port: 8888
+              port: $RuntimePort
+            periodSeconds: 1
           resources:
             requests:
               cpu: 250m
@@ -247,7 +291,6 @@ spec:
               memory: 1Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
       restartPolicy: OnFailure
@@ -255,114 +298,137 @@ spec:
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool
 metadata:
-  name: deepagent-python-pool
-  namespace: agent-sandbox-local
+  name: $WarmPoolName
+  namespace: $SandboxNamespace
 spec:
   replicas: 1
   sandboxTemplateRef:
-    name: deepagent-python
+    name: $TemplateName
+"@
+Set-Content -Path (Join-Path $PocRoot 'template-and-pool.yaml') -Value $TemplateManifest -NoNewline
+
+kubectl apply -f (Join-Path $PocRoot 'template-and-pool.yaml')
+kubectl get sandboxtemplate,sandboxwarmpool -n $SandboxNamespace
+kubectl get pods -n $SandboxNamespace -w
 ```
 
-```bash
-kubectl apply -f sandbox-poc/template-and-pool.yaml
-kubectl get sandboxtemplate,sandboxwarmpool -n "$SANDBOX_NAMESPACE"
-kubectl get pods -n "$SANDBOX_NAMESPACE" -w
-```
+等待 WarmPool Pod 为 `Running` 且 `Ready`。如果是 `ImagePullBackOff`，先确认第 8 步的 `kind load docker-image` 已针对正确 `$KindCluster` 执行，以及 manifest 为 `imagePullPolicy: Never`。
 
-预热 Pod 必须进入 `Running` 与 `Ready`。若失败，先看事件：
+## 10. 不经 DeepAgent 的 SDK 冒烟测试
 
-```bash
-kubectl get events -n "$SANDBOX_NAMESPACE" --sort-by='.lastTimestamp'
-kubectl describe sandboxwarmpool deepagent-python-pool -n "$SANDBOX_NAMESPACE"
-```
+先验证基础设施，避免把 Controller/镜像问题误判为 Agent 问题。项目已安装 `k8s-agent-sandbox`，在项目虚拟环境创建 `$PocRoot/smoke.py`：
 
-## 10. 使用 Python SDK 验证完整链路
-
-安装与 Controller 同版本的 SDK：
-
-```bash
-python3 -m venv "$POC_ROOT/.venv"
-. "$POC_ROOT/.venv/bin/activate"
-pip install "k8s-agent-sandbox==$AGENT_SANDBOX_PY_VERSION"
-```
-
-保存为 `$POC_ROOT/smoke.py`：
-
-```python
+```powershell
+$SmokeScript = @"
 from k8s_agent_sandbox import SandboxClient
 from k8s_agent_sandbox.models import SandboxLocalTunnelConnectionConfig
 
 client = SandboxClient(
-    connection_config=SandboxLocalTunnelConnectionConfig(server_port=8888)
+    connection_config=SandboxLocalTunnelConnectionConfig(server_port=38087)
 )
 sandbox = client.create_sandbox(
-    warmpool="deepagent-python-pool",
-    namespace="agent-sandbox-local",
+    warmpool='deepagent-skill-runtime-pool',
+    namespace='agent-sandbox',
 )
 try:
-    result = sandbox.commands.run(
-        "python /workspace/skills/sandbox-smoke/scripts/hello.py"
-    )
-    print("stdout:", result.stdout)
-    print("stderr:", result.stderr)
-    print("exit_code:", result.exit_code)
+    result = sandbox.commands.run("python -c 'import sys; print(sys.version)'")
+    print('stdout:', result.stdout)
+    print('stderr:', result.stderr)
+    print('exit_code:', result.exit_code)
 finally:
     sandbox.terminate()
-```
+"@
+Set-Content -Path (Join-Path $PocRoot 'smoke.py') -Value $SmokeScript -NoNewline
 
-执行：
-
-```bash
-python "$POC_ROOT/smoke.py"
+uv run python (Join-Path $PocRoot 'smoke.py')
 ```
 
 成功标准：
 
-- Python SDK 创建 `SandboxClaim`；
-- Claim 从 WarmPool 获得 Pod；
-- Router 转发到 runtime 的 `/execute`；
-- Skill 脚本返回 stdout/stderr/exit code；
-- `terminate()` 后 Claim 和 Sandbox 被回收。
+- 自动创建到 Router 的本地 tunnel；
+- 创建 `SandboxClaim`，并由 WarmPool 领取一个 Pod；
+- 命令在 runtime 内返回 Python 版本，`exit_code` 为 `0`；
+- `terminate()` 后 Claim 被回收，WarmPool 自动补充预热 Pod。
 
-## 11. 再接入 DeepAgent
+观察资源：
 
-只有第 10 步通过后，才在项目虚拟环境安装：
-
-```bash
-pip install "langchain-kubernetes[agent-sandbox]"
+```powershell
+kubectl get sandboxclaim,sandbox -n $SandboxNamespace
+kubectl get pods -n $SandboxNamespace
+kubectl get events -n $SandboxNamespace --sort-by='.lastTimestamp'
 ```
 
-先做一个独立的 `KubernetesSandbox` smoke test，再接入现有 `create_agent_service()`。本项目的目标接入、thread 到 sandbox 生命周期映射和 feature flag 见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
+## 11. 使用本项目连接 kind
 
-不要在第 10 步之前移除当前 Harness 对 `execute` 的限制。
+确认 kubeconfig 仍指向 kind：
 
-## 12. 清理
-
-仅删除本 PoC 创建的明确目标：
-
-```bash
-kubectl delete namespace "$SANDBOX_NAMESPACE"
-kind delete cluster --name "$KIND_CLUSTER_NAME"
-docker image rm "$SKILL_IMAGE" "$RUNTIME_IMAGE" "$ROUTER_IMAGE"
+```powershell
+kubectl config current-context
+# 预期：kind-deepagent-sandbox
 ```
 
-不要在有其他项目运行的 Docker Desktop 或 Kubernetes context 上执行宽泛清理命令。
+启用 kind backend 并按 Windows 入口启动本项目：
 
-## 13. 常见故障
+```powershell
+$env:AGENT_ENV = 'local'
+$env:SANDBOX_PROVIDER = 'gke_agent'
+.\.venv\Scripts\python.exe src\main.py
+```
 
-| 症状 | 首先检查 |
+> Windows 必须使用 `src\main.py` 入口，而不是直接运行 `uvicorn` CLI；项目入口会设置 psycopg3 所需的 `WindowsSelectorEventLoopPolicy`。
+
+此时 [`config/local.yaml`](../config/local.yaml) 选择：
+
+```yaml
+provider: ${SANDBOX_PROVIDER:-local_shell}
+gke:
+  connection_mode: tunnel
+  namespace: agent-sandbox
+  template_name: deepagent-skill-runtime
+  warm_pool_name: deepagent-skill-runtime-pool
+  runtime_port: 38087
+```
+
+`langchain-kubernetes` 会实现 DeepAgents 的 sandbox backend 协议；无需自研 GKE/kind adapter。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 kind Sandbox。
+
+## 12. 常见故障
+
+| 现象 | 优先检查 |
 | --- | --- |
-| `SandboxTemplate` 资源不存在 | extensions manifest 是否已安装；API version 是否与 release 匹配 |
-| WarmPool Pod `ImagePullBackOff` | 是否执行了 `kind load docker-image`；`imagePullPolicy` 是否合适 |
-| Pod 无法调度 | gVisor RuntimeClass 名称、kind gVisor 安装、CPU/内存是否足够 |
-| SDK 创建后超时 | Controller、Router、runtime 的 readiness probe 和 port `8888` |
-| `/execute` 返回 404 或连接失败 | runtime 是否使用官方示例协议；Router 是否指向正确 Pod/port |
-| 运行时 root 被拒绝 | Dockerfile 最终 `USER` 与 Template `runAsUser` 不一致 |
+| `kubectl` 连错集群 | `kubectl config current-context` 必须是 `kind-deepagent-sandbox` |
+| Controller 无 Ready | Docker Desktop 是否运行、Controller events/log、CRD 是否已安装 |
+| `RuntimeClass gvisor not found` | 未完成官方 gVisor kind 指南；功能 PoC 时删除 Template 里的该行 |
+| WarmPool `ImagePullBackOff` | `kind load docker-image`、镜像名、`imagePullPolicy: Never` |
+| Router 不 Ready | Router manifest 的本地镜像是否替换成功，及 Service/Deployment 是否位于 `agent-sandbox-system` |
+| SDK tunnel 失败 | `kubectl` 在 PATH、context 正确、Router Service 名称为 `sandbox-router-svc` |
+| `connection refused` / `/execute` 失败 | Template `containerPort`、probe、项目 `runtime_port`、Dockerfile CMD 必须全为 `38087` |
+| `execute` 未出现在 Agent | 确认 `$env:SANDBOX_PROVIDER = 'gke_agent'` 在启动进程中已设置 |
+| 应用启动后数据库异常 | 按 README 启动本地 PostgreSQL，并使用 `src\main.py` 入口 |
+
+## 13. 清理
+
+确认当前 context 是本手册创建的 kind 集群后再删除：
+
+```powershell
+kubectl config current-context
+kubectl delete namespace $SandboxNamespace
+kind delete cluster --name $KindCluster
+```
+
+可选地删除本次构建的明确镜像和临时上游目录：
+
+```powershell
+docker image rm $RuntimeImage $RouterImage
+Remove-Item -Recurse -Force $PocRoot
+```
+
+不要对 Docker Desktop、`C:\`、用户目录或未知 Kubernetes context 执行宽泛删除。
 
 ## 14. 官方参考
 
 - [Agent Sandbox quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/README.md)
 - [gVisor on kind quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/gvisor.md)
-- [Python Runtime Sandbox 源码](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/python-runtime-sandbox)
-- [Sandbox Router 源码](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router)
-- [GKE Agent Sandbox 官方部署文档](https://cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox)
+- [Python runtime 示例](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/python-runtime-sandbox)
+- [Sandbox Router 源码与 manifest](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router)
+- [langchain-kubernetes](https://pypi.org/project/langchain-kubernetes/)
+- [GKE Agent Sandbox 官方文档](https://cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox)

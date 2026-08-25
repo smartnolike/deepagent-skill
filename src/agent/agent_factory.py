@@ -13,7 +13,6 @@ from deepagents import (
     create_deep_agent,
     register_harness_profile,
 )
-from deepagents.backends import FilesystemBackend
 
 from agent.agent_context import AgentContext
 from agent.harness_service import DeepAgentHarnessService
@@ -26,6 +25,7 @@ from mcp_runtime.mcp_client_manager import McpClientManager
 from mcp_runtime.tool_registry import McpToolRegistry
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
+from sandbox.backend_factory import create_gke_sandbox_manager, create_sandbox_backend
 from tools.registry import CustomToolRegistry
 
 
@@ -48,7 +48,7 @@ def create_agent_service(
             # 不注册默认子 Agent，避免将 task Tool 暴露给当前单 Agent Harness。
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
             # 这些 Tool 在发往模型前即被剔除；FilesystemPermission 仍在执行层做兜底。
-            excluded_tools=frozenset({"delete", "write_file", "edit_file", "execute"}),
+            excluded_tools=_excluded_tools(settings),
         ),
     )
     # FilesystemBackend 的虚拟根目录就是 skill-packages；SkillsMiddleware
@@ -57,27 +57,51 @@ def create_agent_service(
     project_root = Path(__file__).resolve().parents[2]
     skills_root = project_root / settings.agent.skills_dir
     skill_paths = ["/"] if settings.agent.enabled_skills else []
-    graph = create_deep_agent(
-        model=create_chat_model(settings.agent, httpx_client, runtime_secrets),
-        tools=McpToolRegistry(mcp_manager).build()
+    graph_kwargs = {
+        "tools": McpToolRegistry(mcp_manager).build()
         + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build(),
-        system_prompt=(
+        "system_prompt": (
             f"{settings.agent.system_prompt}\n\n{_response_language_system_prompt()}\n\n"
             f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}"
         ),
-        skills=skill_paths,
-        backend=FilesystemBackend(root_dir=skills_root),
-        permissions=[FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
-        context_schema=AgentContext,
-        checkpointer=checkpointer,
-        interrupt_on=_confirmation_rules(mcp_manager),
-        middleware=[ResponseLanguageMiddleware()],
-        name="deepagent-platform",
-    )
+        "skills": skill_paths,
+        "permissions": [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
+        "context_schema": AgentContext,
+        "interrupt_on": _confirmation_rules(mcp_manager, settings),
+        "middleware": [ResponseLanguageMiddleware()],
+        "name": "deepagent-platform",
+    }
+    model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
+    if settings.sandbox.provider == "gke_agent":
+        # KubernetesSandboxManager is the third-party DeepAgents adapter. It
+        # lazily binds a KubernetesSandbox to the current LangGraph thread.
+        graph = create_gke_sandbox_manager(settings.sandbox).create_agent(
+            model,
+            checkpointer=checkpointer,
+            **graph_kwargs,
+        )
+    else:
+        graph = create_deep_agent(
+            model=model,
+            backend=create_sandbox_backend(settings.sandbox, skills_root),
+            checkpointer=checkpointer,
+            **graph_kwargs,
+        )
     return DeepAgentHarnessService(graph, observability)
 
 
-def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, object]]:
+def _excluded_tools(settings: Settings) -> frozenset[str]:
+    """Expose execution only through an explicitly selected execution backend."""
+    excluded = {"delete", "write_file", "edit_file"}
+    execution_enabled = settings.sandbox.provider == "gke_agent" or (
+        settings.sandbox.provider == "local_shell" and settings.sandbox.allow_agent_shell
+    )
+    if not execution_enabled:
+        excluded.add("execute")
+    return frozenset(excluded)
+
+
+def _confirmation_rules(mcp_manager: McpClientManager, settings: Settings) -> dict[str, dict[str, object]]:
     """将 YAML 中需用户确认的 MCP Tool 映射为 DeepAgents HITL 配置。"""
     rules = {
         f"{server_id}__{tool_name}": {
@@ -91,6 +115,15 @@ def _confirmation_rules(mcp_manager: McpClientManager) -> dict[str, dict[str, ob
         "allowed_decisions": ["respond"],
         "description": "Provide the requested structured form values.",
     }
+    execution_enabled = settings.sandbox.provider == "gke_agent" or (
+        settings.sandbox.provider == "local_shell" and settings.sandbox.allow_agent_shell
+    )
+    if execution_enabled and settings.sandbox.execute_requires_confirmation:
+        environment = "the local development machine" if settings.sandbox.provider == "local_shell" else "the GKE sandbox"
+        rules["execute"] = {
+            "allowed_decisions": ["approve", "reject"],
+            "description": f"Review and approve this command before it runs in {environment}.",
+        }
     return rules
 
 

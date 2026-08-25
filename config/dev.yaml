@@ -12,6 +12,17 @@ agent:
     request_timeout_seconds: 3
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
+# Enable this block only after the GKE Agent Sandbox add-on, SandboxTemplate,
+# SandboxWarmPool, and in-cluster Router Service are deployed.
+# sandbox:
+#   provider: gke_agent
+#   gke:
+#     namespace: agent-sandbox
+#     template_name: deepagent-skill-runtime
+#     warm_pool_name: deepagent-skill-runtime-pool
+#     connection_mode: direct
+#     router_url: http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080
+#     runtime_port: 38087
 database:
   host: 127.0.0.1
   port: 5432

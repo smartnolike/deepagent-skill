@@ -12,6 +12,7 @@ from .agent_settings import AgentSettings
 from .database_settings import DatabaseSettings
 from .langfuse_settings import LangfuseSettings
 from .mcp_server_settings import McpServerSettings
+from .sandbox_settings import SandboxSettings
 from .tool_settings import ToolSettings
 
 
@@ -22,6 +23,7 @@ class Settings(BaseSettings):
 
     agent_env: Literal["local", "dev", "prod"]
     agent: AgentSettings = AgentSettings()
+    sandbox: SandboxSettings = Field(default_factory=SandboxSettings)
     tools: ToolSettings = ToolSettings()
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     database: DatabaseSettings
