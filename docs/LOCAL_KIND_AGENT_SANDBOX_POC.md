@@ -1,8 +1,8 @@
-# Windows Docker Desktop + kind 本地 Sandbox 手册
+# Windows Docker Desktop 内置 Kubernetes（Kind）本地 Sandbox 手册
 
-> 目标：在 Windows 本机运行本项目的 FastAPI/DeepAgent，在 Docker Desktop 的 kind 集群中运行 Agent Sandbox。Skill 的脚本实际在 kind 的 Sandbox Pod 内执行，而非在 Windows 主机执行。
+> 目标：在 Windows 本机运行本项目的 FastAPI/DeepAgent，在 Docker Desktop **内置 Kubernetes 的 Kind provisioner** 中运行 Agent Sandbox。Skill 的脚本实际在 Sandbox Pod 内执行，而非在 Windows 主机执行。
 
-> 本手册是本地集成测试方案，不是 GKE 部署方案。kind 使用开源 `kubernetes-sigs/agent-sandbox` Controller；**不要**在 kind 中尝试启用 GKE add-on。GKE 路径见 [GKE Agent Sandbox 部署手册](GKE_AGENT_SANDBOX_DEPLOYMENT_GUIDE.md)。
+> 本手册是本地集成测试方案，不是 GKE 部署方案。使用开源 `kubernetes-sigs/agent-sandbox` Controller；**不要**在 Docker Desktop Kubernetes 中尝试启用 GKE add-on。GKE 路径见 [GKE Agent Sandbox 部署手册](GKE_AGENT_SANDBOX_DEPLOYMENT_GUIDE.md)。
 
 ## 1. 最终架构
 
@@ -11,11 +11,11 @@ Windows PowerShell
 ├─ 本项目 FastAPI / DeepAgent
 │  └─ langchain-kubernetes（connection_mode=tunnel）
 │     └─ kubectl port-forward（由依赖自动管理）
-│        └─ kind 内 Sandbox Router Service :8080
+│        └─ Docker Desktop Kubernetes 内的 Sandbox Router Service :8080
 │           └─ Sandbox Pod 的 runtime :38087
 │              └─ /workspace/skills/<skill>/scripts/*.py
 └─ Docker Desktop
-   └─ kind cluster
+   └─ 内置 Kubernetes（Kind provisioner）
       ├─ Agent Sandbox Controller + CRD
       ├─ Sandbox Router
       ├─ SandboxTemplate
@@ -32,14 +32,14 @@ Windows PowerShell
 
 不要把某个 Sandbox Pod 的 IP 或 Pod DNS 填进项目配置；Pod 会由 WarmPool/Claim 生命周期替换。
 
-## 2. 何时用 LocalShell，何时用 kind
+## 2. 何时用 LocalShell，何时用 Docker Desktop Kubernetes
 
 | 模式 | 启动方式 | 命令实际执行位置 | 用途 |
 | --- | --- | --- | --- |
 | 快速脚本调试 | 默认 | Windows 主机 | 仅调试已信任的脚本；每条命令要求人工确认 |
-| kind 集成测试 | `SANDBOX_PROVIDER=gke_agent` | kind Sandbox Pod | 验证 Controller、Router、镜像、依赖、Skill 脚本和 DeepAgent 调用链 |
+| Kind 集成测试 | `SANDBOX_PROVIDER=gke_agent` | Docker Desktop Kubernetes 的 Sandbox Pod | 验证 Controller、Router、镜像、依赖、Skill 脚本和 DeepAgent 调用链 |
 
-`LocalShellBackend` 没有隔离。要验证真实隔离与镜像依赖，使用本手册的 kind 模式。
+`LocalShellBackend` 没有隔离。要验证真实 Pod 生命周期与镜像依赖，使用本手册的 Docker Desktop Kubernetes 模式。
 
 ## 3. Windows 前置条件
 
@@ -56,11 +56,12 @@ docker info --format '{{.OSType}}'
 
 第二条应输出 `linux`。不是时，先在 Docker Desktop 切换到 Linux containers 并重启。
 
+然后在 Docker Desktop **Settings > General** 确认 `Use containerd for pulling and storing images` 已启用（新版本默认启用）。Docker Desktop 的内置 Kind 只支持 containerd image store，不支持旧 Docker image store。
+
 ### 3.2 工具
 
 需要以下命令在 PowerShell 的 `PATH` 中：
 
-- `kind` 0.20 或更新版本；
 - `kubectl` 1.28 或更新版本；
 - Git；
 - Python 3.12 与本项目的 `uv` 环境；
@@ -69,7 +70,6 @@ docker info --format '{{.OSType}}'
 如果使用 WinGet，可先搜索和安装；公司设备的安装策略以 IT 要求为准：
 
 ```powershell
-winget search kind
 winget search kubectl
 winget search Git
 winget search uv
@@ -78,7 +78,6 @@ winget search uv
 检查：
 
 ```powershell
-kind version
 kubectl version --client
 git --version
 uv --version
@@ -92,14 +91,13 @@ uv --version
 
 ```powershell
 $ProjectRoot = (Get-Location).Path
-$KindCluster = 'deepagent-sandbox'
 $SandboxNamespace = 'agent-sandbox'
 $ControllerNamespace = 'agent-sandbox-system'
 $TemplateName = 'deepagent-skill-runtime'
 $WarmPoolName = 'deepagent-skill-runtime-pool'
 $RuntimePort = 38087
-$RouterImage = 'deepagent/sandbox-router:kind'
-$RuntimeImage = 'deepagent/skill-runtime:kind'
+$RouterImage = 'deepagent/sandbox-router:desktop-kind'
+$RuntimeImage = 'deepagent/skill-runtime:desktop-kind'
 $AgentSandboxVersion = 'v0.5.6'
 $PocRoot = Join-Path $env:TEMP 'deepagent-agent-sandbox-poc'
 $UpstreamRoot = Join-Path $PocRoot 'agent-sandbox'
@@ -107,37 +105,27 @@ $UpstreamRoot = Join-Path $PocRoot 'agent-sandbox'
 
 > `v0.5.6` 与当前项目锁定的 `k8s-agent-sandbox==0.5.6` 对齐。升级时要同时验证 Controller、Router、SDK、CRD API version 与 `langchain-kubernetes` 的兼容性，不能只升级其中一个。
 
-## 5. 创建 kind 集群
+## 5. 在 Docker Desktop 创建内置 Kind 集群
 
-先检查当前 context，避免误操作公司或云端集群：
+无需安装或运行独立 `kind.exe`。在 Docker Desktop Dashboard 操作：
+
+1. 打开 **Kubernetes** 页面；
+2. 点击 **Create cluster**；
+3. Cluster type 选择 **kind**，不要选旧的 `kubeadm`；
+4. 初次 PoC 选 1 node 即可；
+5. 点击 **Create**，等待状态变为 Running。
+
+回到 PowerShell 验证：
 
 ```powershell
 kubectl config current-context
-kind get clusters
-```
-
-创建集群：
-
-```powershell
-kind create cluster --name $KindCluster
-kubectl config use-context "kind-$KindCluster"
 kubectl cluster-info
 kubectl get nodes
 ```
 
-### 5.1 gVisor：推荐，但可分两阶段完成
+预期 context 为 `docker-desktop`。后续所有 `kubectl` 命令都必须保持该 context，不能再执行 `kind create cluster` 或 `kind delete cluster`。
 
-普通 kind 只适合验证 Controller、Router 与 runtime 协议，不具备 gVisor 隔离结论。
-
-要尽量接近 GKE，按官方 [gVisor on kind quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/gvisor.md) 创建/改造集群，然后返回本手册第 6 步。该流程与 kind node 镜像版本相关，必须以官方当日步骤为准，不要手写猜测的 containerd 配置。
-
-完成后确认 RuntimeClass：
-
-```powershell
-kubectl get runtimeclass
-```
-
-后文 manifest 中的 `runtimeClassName: gvisor` 必须与实际 RuntimeClass 名字一致。若还未完成 gVisor，先删除该行进行功能 PoC，**不得**把这类 PoC 当成隔离安全验证。
+> Docker Desktop Kind 的 Enhanced Container Isolation（ECI）不等于 GKE Agent Sandbox 所用的 gVisor RuntimeClass。本手册验证的是 Agent Sandbox 功能链路；不在 Template 中设置 `runtimeClassName: gvisor`，也不将本机测试视为 GKE gVisor 安全验证。
 
 ## 6. 下载上游源码并安装开源 Controller/CRD
 
@@ -172,7 +160,6 @@ Router 是独立集群组件，不在 Python runtime 镜像中。
 ```powershell
 $RouterSource = Join-Path $UpstreamRoot 'clients/python/agentic-sandbox-client/sandbox-router'
 docker build -t $RouterImage $RouterSource
-kind load docker-image $RouterImage --name $KindCluster
 ```
 
 上游 Router manifest 使用的是 release 内的真实字段。先查看，确认 `image:` 与 `imagePullPolicy` 的写法：
@@ -182,12 +169,12 @@ $RouterManifestPath = Join-Path $RouterSource 'sandbox_router.yaml'
 Get-Content $RouterManifestPath
 ```
 
-将 manifest 复制到临时目录后，替换镜像并设置 `imagePullPolicy: Never`（镜像已由 `kind load` 导入，不能让 kind 再到远端拉取）：
+Docker Desktop Kind 使用 containerd image store；本机 `docker build` 的镜像可由该集群使用。将 manifest 复制到临时目录后，替换镜像并设置 `imagePullPolicy: IfNotPresent`：
 
 ```powershell
 $RouterManifest = Get-Content $RouterManifestPath -Raw
 $RouterManifest = $RouterManifest.Replace('${ROUTER_IMAGE}', $RouterImage)
-$RouterManifest = $RouterManifest -replace '# imagePullPolicy: Never', 'imagePullPolicy: Never'
+$RouterManifest = $RouterManifest -replace '# imagePullPolicy: Never', 'imagePullPolicy: IfNotPresent'
 $RouterManifest | kubectl apply -n $ControllerNamespace -f -
 
 kubectl wait --for=condition=Available deployment -l app=sandbox-router `
@@ -238,7 +225,6 @@ Set-Content -Path (Join-Path $RuntimeContext 'Dockerfile') -Value $Dockerfile -N
 
 docker build -t $RuntimeImage $RuntimeContext
 docker run --rm --entrypoint id $RuntimeImage
-kind load docker-image $RuntimeImage --name $KindCluster
 ```
 
 最后一条 `id` 必须显示非 root UID（官方示例为 `1000`）。`ls` 与 `grep` 是操作系统命令，不受 Python runtime 限制；是否可用取决于镜像内是否安装，本 Dockerfile 已显式安装。
@@ -265,8 +251,6 @@ metadata:
 spec:
   podTemplate:
     spec:
-      # 完成第 5.1 的 gVisor 后保留；否则删除这行仅做功能 PoC。
-      runtimeClassName: gvisor
       automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
@@ -274,7 +258,7 @@ spec:
       containers:
         - name: python-runtime
           image: $RuntimeImage
-          imagePullPolicy: Never
+          imagePullPolicy: IfNotPresent
           ports:
             - containerPort: $RuntimePort
           readinessProbe:
@@ -312,7 +296,7 @@ kubectl get sandboxtemplate,sandboxwarmpool -n $SandboxNamespace
 kubectl get pods -n $SandboxNamespace -w
 ```
 
-等待 WarmPool Pod 为 `Running` 且 `Ready`。如果是 `ImagePullBackOff`，先确认第 8 步的 `kind load docker-image` 已针对正确 `$KindCluster` 执行，以及 manifest 为 `imagePullPolicy: Never`。
+等待 WarmPool Pod 为 `Running` 且 `Ready`。如果是 `ImagePullBackOff`，先确认 Docker Desktop 的 containerd image store 已启用、镜像标签和 manifest 一致、并使用 `imagePullPolicy: IfNotPresent`。若公司策略使 Kubernetes 无法访问本机镜像，改为把无敏感信息的 PoC 镜像推送至私有 Docker Hub 或公司 Artifact Registry，再将 manifest 的 `image:` 改为该完整仓库地址。
 
 ## 10. 不经 DeepAgent 的 SDK 冒烟测试
 
@@ -358,16 +342,16 @@ kubectl get pods -n $SandboxNamespace
 kubectl get events -n $SandboxNamespace --sort-by='.lastTimestamp'
 ```
 
-## 11. 使用本项目连接 kind
+## 11. 使用本项目连接 Docker Desktop Kubernetes
 
-确认 kubeconfig 仍指向 kind：
+确认 kubeconfig 仍指向 Docker Desktop：
 
 ```powershell
 kubectl config current-context
-# 预期：kind-deepagent-sandbox
+# 预期：docker-desktop
 ```
 
-启用 kind backend 并按 Windows 入口启动本项目：
+启用 Kubernetes sandbox backend 并按 Windows 入口启动本项目：
 
 ```powershell
 $env:AGENT_ENV = 'local'
@@ -389,16 +373,15 @@ gke:
   runtime_port: 38087
 ```
 
-`langchain-kubernetes` 会实现 DeepAgents 的 sandbox backend 协议；无需自研 GKE/kind adapter。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 kind Sandbox。
+`langchain-kubernetes` 会实现 DeepAgents 的 sandbox backend 协议；无需自研 GKE/kind adapter。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 Sandbox Pod。
 
 ## 12. 常见故障
 
 | 现象 | 优先检查 |
 | --- | --- |
-| `kubectl` 连错集群 | `kubectl config current-context` 必须是 `kind-deepagent-sandbox` |
+| `kubectl` 连错集群 | `kubectl config current-context` 必须是 `docker-desktop` |
 | Controller 无 Ready | Docker Desktop 是否运行、Controller events/log、CRD 是否已安装 |
-| `RuntimeClass gvisor not found` | 未完成官方 gVisor kind 指南；功能 PoC 时删除 Template 里的该行 |
-| WarmPool `ImagePullBackOff` | `kind load docker-image`、镜像名、`imagePullPolicy: Never` |
+| WarmPool `ImagePullBackOff` | Docker Desktop 的 containerd image store、镜像名、`imagePullPolicy: IfNotPresent`；必要时推送到私有 registry |
 | Router 不 Ready | Router manifest 的本地镜像是否替换成功，及 Service/Deployment 是否位于 `agent-sandbox-system` |
 | SDK tunnel 失败 | `kubectl` 在 PATH、context 正确、Router Service 名称为 `sandbox-router-svc` |
 | `connection refused` / `/execute` 失败 | Template `containerPort`、probe、项目 `runtime_port`、Dockerfile CMD 必须全为 `38087` |
@@ -407,13 +390,14 @@ gke:
 
 ## 13. 清理
 
-确认当前 context 是本手册创建的 kind 集群后再删除：
+确认当前 context 是 `docker-desktop` 后删除本手册创建的 namespace：
 
 ```powershell
 kubectl config current-context
 kubectl delete namespace $SandboxNamespace
-kind delete cluster --name $KindCluster
 ```
+
+如需删除整个本地集群，在 Docker Desktop 的 **Kubernetes** 页面选择 **Stop** 或 **Reset cluster**。这会删除该集群内的全部 Kubernetes 资源，不仅是 Sandbox。
 
 可选地删除本次构建的明确镜像和临时上游目录：
 
@@ -427,7 +411,7 @@ Remove-Item -Recurse -Force $PocRoot
 ## 14. 官方参考
 
 - [Agent Sandbox quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/README.md)
-- [gVisor on kind quickstart](https://github.com/kubernetes-sigs/agent-sandbox/blob/main/examples/quickstart/gvisor.md)
+- [Docker Desktop Kubernetes（Kind provisioner）](https://docs.docker.com/desktop/use-desktop/kubernetes/)
 - [Python runtime 示例](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/python-runtime-sandbox)
 - [Sandbox Router 源码与 manifest](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router)
 - [langchain-kubernetes](https://pypi.org/project/langchain-kubernetes/)
