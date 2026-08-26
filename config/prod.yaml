@@ -17,11 +17,10 @@ agent:
 # sandbox:
 #   provider: gke_agent
 #   gke:
-#     namespace: agent-sandbox
-#     template_name: deepagent-skill-runtime
-#     warm_pool_name: deepagent-skill-runtime-pool
+#     namespace: danaan-gcp-portal
+#     template_name: danaan-agent-sandbox-template
 #     connection_mode: direct
-#     router_url: http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080
+#     router_url: http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088
 #     runtime_port: 38087
 #     router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN}
 #     absolute_ttl_seconds: 14400

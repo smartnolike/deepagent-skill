@@ -20,7 +20,7 @@ dev/prod DeepAgent API（位于 GKE）
   → gVisor Sandbox Pod
 ```
 
-GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；项目内薄 adapter 使用官方 `k8s-agent-sandbox==0.5.6` 映射 DeepAgents backend 调用。Sandbox Router 是 local tunnel 与集群内 direct Router URL 的稳定访问层；更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
+GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；项目内 Script Runner 使用官方 `k8s-agent-sandbox==0.4.6`，与 GKE 当前托管的 `extensions.agents.x-k8s.io/v1alpha1` CRD 对应。Claim 通过 `SandboxTemplate` 创建，Controller 自动从匹配的 WarmPool 领取预热 Pod；不要在此 GKE 模式中使用请求 `v1beta1` 的 `0.5.x` SDK。Sandbox Router 是脚本、文件 I/O 的稳定访问层；更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
 
 ## 2. 官方资料
 
@@ -107,7 +107,7 @@ kubectl get crd | rg 'agents.x-k8s.io'
 kubectl api-resources | rg 'sandbox'
 ```
 
-Sandbox Router 不属于上述托管 Controller/CRD 生命周期。只有使用 local tunnel、Gateway，或所选 DeepAgents 适配器要求 Router 时，才按第 7 节部署。
+Sandbox Router 不属于上述托管 Controller/CRD 生命周期。只有 local 开发、Gateway，或所选 DeepAgents 适配器要求 Router 时，才按第 7 节部署。
 
 ## 5. 创建隔离 namespace 和基础护栏
 
@@ -229,7 +229,7 @@ CRD `apiVersion`、WarmPool 字段和官方 runtime 镜像会随 Agent Sandbox �
 
 Sandbox Router 是 client 与 sandbox Pod 的稳定通信入口，但**不是创建 Template/WarmPool 的前提**。Google 官方开发示例使用 Router 配合 `kubectl port-forward`；集群内控制器应用若使用 `SandboxInClusterConnectionConfig` 可直接访问 Sandbox Pod，不必部署 Router。
 
-当 local 开发需要 tunnel、集群外需要 Gateway，或使用的 DeepAgents 适配器要求 Router 时，使用 Google 提供的 Router manifest 作为起点，部署为 ClusterIP；不要将 Router 公开到互联网。
+当 local 开发需要手动 port-forward、集群外需要 Gateway，或使用的 DeepAgents 适配器要求 Router 时，使用 Google 提供的 Router manifest 作为起点，部署为 ClusterIP；不要将 Router 公开到互联网。
 
 ```text
 官方部署示例：
@@ -254,21 +254,25 @@ kubectl get endpoints -n "$SANDBOX_NAMESPACE" sandbox-router-svc
 
 ## 8. 连接测试
 
-### 8.1 local：开发 tunnel
+### 8.1 local：开发机连接 dev GKE
 
-local 仅可对 `agent-sandbox-dev` 使用 tunnel。Python client 会建立到 Router 的 port-forward；这是开发便利措施，不是生产连接方案。
+GKE 官方 `v1alpha1` SDK 的内置 tunnel 固定使用 `svc/sandbox-router-svc:8080`。若 dev Router 使用自定义名称或端口（例如 `danaan-agent-sandbox-router-svc:38088`），开发机应手动建立 port-forward，并让应用使用 direct URL。
 
 ```bash
-python -m venv .venv
-. .venv/bin/activate
-pip install k8s-agent-sandbox
+kubectl -n danaan-gcp-portal port-forward \
+  svc/danaan-agent-sandbox-router-svc 38088:38088
 ```
 
 ```python
 from k8s_agent_sandbox import SandboxClient
-from k8s_agent_sandbox.models import SandboxLocalTunnelConnectionConfig
+from k8s_agent_sandbox.models import SandboxDirectConnectionConfig
 
-client = SandboxClient(connection_config=SandboxLocalTunnelConnectionConfig())
+client = SandboxClient(
+    connection_config=SandboxDirectConnectionConfig(
+        api_url="http://127.0.0.1:38088",
+        server_port=38087,
+    )
+)
 sandbox = client.create_sandbox(
     template="deepagent-python",
     namespace="agent-sandbox-dev",
@@ -282,7 +286,7 @@ finally:
     client.delete_sandbox(sandbox.claim_name, namespace="agent-sandbox-dev")
 ```
 
-该 API 形态和开发 tunnel 行为见 [Google 官方 Python client 测试说明](https://cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox#test-the-sandbox)。
+本机同时必须可访问 GKE Kubernetes API，SDK 才能创建和等待 `SandboxClaim`。若 control plane 是私网地址，需通过 VPN 或为启动应用的进程设置可达该地址的 `HTTPS_PROXY`。API 形态见 [Google 官方 Python client 测试说明](https://cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox#test-the-sandbox)。
 
 ### 8.2 dev/prod：in-cluster direct
 
@@ -296,7 +300,7 @@ DeepAgent API 部署在相同集群后，配置项目内官方 SDK adapter 使�
 - [ ] Standard 集群有独立 gVisor node pool，Sandbox Pod 的 `runtimeClassName` 是 `gvisor`；
 - [ ] `agent-sandbox-dev` 和 `agent-sandbox-prod` 相互独立；
 - [ ] Template、WarmPool、Router 都处于 Ready；
-- [ ] local 通过 tunnel 能创建、执行和销毁测试 sandbox；
+- [ ] local 通过手动 port-forward + direct URL 能创建、执行和销毁测试 sandbox；
 - [ ] GKE 内的 DeepAgent API 通过 ClusterIP direct 连接 Router；
 - [ ] sandbox 无法读取 Kubernetes token、metadata、主服务文件或未经允许的网络目标；
 - [ ] Sandbox 镜像使用 Artifact Registry 的 digest，包含 Skill 脚本和锁定依赖；

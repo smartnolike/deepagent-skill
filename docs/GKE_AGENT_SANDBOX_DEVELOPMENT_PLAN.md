@@ -34,7 +34,7 @@ run_skill_script（用户确认后）
 | `ScriptCatalog` | 启动时扫描已启用 Skill 的 `scripts/*.py`，形成内存白名单 |
 | 应用内 GKE Script Runner | 仅执行确认后的固定脚本，下载 `.xlsx` 产物后立即终止 Claim |
 
-项目直接固定官方 `k8s-agent-sandbox==0.5.6`，并维护很薄的一次性 Script Runner。此前评估的第三方 `langchain-kubernetes` 与该 SDK 的 `SandboxClient` API 不兼容，因此不作为生产依赖。
+项目固定官方 `k8s-agent-sandbox==0.4.6`，与 GKE 托管 Agent Sandbox 当前提供的 `v1alpha1` CRD 对齐，并维护很薄的一次性 Script Runner。`0.5.x` SDK 请求 `v1beta1`，不能用于仅提供 `v1alpha1` 的 GKE add-on。此前评估的第三方 `langchain-kubernetes` 与该 SDK 的 `SandboxClient` API 不兼容，因此不作为生产依赖。
 
 此方案会让 Agent 获得沙盒内的 `execute`、文件读写和编辑能力；它不是“只允许执行一个固定 Python 文件”的模型。固定、高风险的业务脚本仍应使用语义 Tool、HITL 与受控 GKE Job，见 [SKILL_SCRIPT_SANDBOX.md](SKILL_SCRIPT_SANDBOX.md)。
 
@@ -69,11 +69,11 @@ prod FastAPI（在 prod GKE）
 
 | 环境 | Sandbox namespace | `connection_mode` | 生命周期建议 |
 | --- | --- | --- | --- |
-| local | `agent-sandbox-dev` | `tunnel` | idle 15 分钟，绝对 2 小时 |
+| local | `agent-sandbox-dev` | `direct` + 手动 port-forward | idle 15 分钟，绝对 2 小时 |
 | dev | `agent-sandbox-dev` | `direct` | idle 15 分钟，绝对 2 小时 |
 | prod | `agent-sandbox-prod` | `direct` | idle 30 分钟，绝对 4 小时 |
 
-`tunnel` 使用开发者 kubeconfig 与 `kubectl port-forward`，仅允许 local。生产禁止 port-forward，改用集群内 Service DNS 和专用 Kubernetes ServiceAccount。
+local 使用开发者 kubeconfig 创建 Claim，并手动 `kubectl port-forward` 到 Router 后使用 direct URL；这是开发便利措施。生产禁止 port-forward，改用集群内 Service DNS 和专用 Kubernetes ServiceAccount。旧 `v1alpha1` SDK 的内置 tunnel 固定要求 `svc/sandbox-router-svc:8080`，不适用于自定义 Router 名称或端口。
 
 ## 5. 基础设施实施
 
@@ -85,7 +85,7 @@ prod FastAPI（在 prod GKE）
 
 1. 启用 GKE Agent Sandbox，建立 gVisor 专用节点池；
 2. 验证 add-on 已提供 Controller 和 CRD；不要在 GKE 上额外应用开源 Controller/CRD release manifest；
-3. 部署 Sandbox Router：local tunnel 与集群内 direct Router URL 都使用它；默认 GKE 网络策略只允许 Router 进入 Sandbox Pod；
+3. 部署 Sandbox Router：local 手动 port-forward 与集群内 direct Router URL 都使用它；默认 GKE 网络策略只允许 Router 进入 Sandbox Pod；
 4. 创建 `agent-sandbox-dev` 或 `agent-sandbox-prod` namespace；
 5. 应用 Pod Security `restricted`、ResourceQuota、LimitRange 和默认拒绝 egress 的 NetworkPolicy；
 6. 配置 Agent API ServiceAccount，使其仅能管理本 namespace 的 sandbox 资源；
@@ -174,8 +174,7 @@ enabled
 provider = kubernetes
 namespace
 template_name
-warm_pool_name
-connection_mode = tunnel | direct
+connection_mode = direct（GKE 自定义 Router 时）或 tunnel（仅默认 svc/8080）
 api_url                         # direct 模式必填
 ttl_seconds
 ttl_idle_seconds
@@ -184,7 +183,7 @@ ttl_idle_seconds
 增加 Python 依赖：
 
 ```text
-k8s-agent-sandbox==0.5.6
+k8s-agent-sandbox==0.4.6
 ```
 
 ### 7.2 DeepAgent Harness
@@ -249,7 +248,7 @@ TTL 后删除 sandbox；同一会话后续请求创建新 sandbox。新 sandbox 
 ### Milestone 2：独立兼容性 Spike
 
 - 使用官方 SDK 与应用内 adapter 验证创建、复用、执行、文件读写、超时、输出截断、TTL、删除和 WarmPool；
-- 验证 local `tunnel` 和 in-cluster `direct`；
+- 验证 local 手动 port-forward + `direct` 和 in-cluster `direct`；
 - 此阶段不修改现有 Agent 主流程。
 
 ### Milestone 3：镜像与 Skill 供应链

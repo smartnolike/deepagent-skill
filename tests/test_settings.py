@@ -53,8 +53,8 @@ def test_gke_agent_requires_connection_settings() -> None:
         )
 
 
-def test_gke_agent_requires_a_warm_pool() -> None:
-    with pytest.raises(ValidationError, match="warm_pool_name"):
+def test_gke_agent_requires_a_template() -> None:
+    with pytest.raises(ValidationError, match="template_name"):
         Settings.model_validate(
             {
                 "agent_env": "dev",
@@ -65,7 +65,6 @@ def test_gke_agent_requires_a_warm_pool() -> None:
                     "provider": "gke_agent",
                     "gke": {
                         "namespace": "agent-sandbox",
-                        "template_name": "deepagent-runtime",
                         "router_url": "http://sandbox-router:8080",
                     },
                 },
@@ -85,7 +84,6 @@ def test_gke_tunnel_does_not_require_a_router_url() -> None:
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",
-                    "warm_pool_name": "deepagent-runtime-pool",
                     "connection_mode": "tunnel",
                 },
             },

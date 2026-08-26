@@ -22,9 +22,9 @@ agent:
   enabled_skills: [danaan-cloud-resource]
 sandbox:
   # Default: LocalShellBackend runs commands directly on this developer machine.
-  # To integration-test the same Skill against local kind or dev GKE instead,
-  # launch with SANDBOX_PROVIDER=gke_agent. The official SDK opens a kubectl
-  # tunnel to the Router; current kubeconfig must target that cluster.
+  # To integration-test a Skill against dev GKE, launch with
+  # SANDBOX_PROVIDER=gke_agent and use direct mode plus a manual port-forward.
+  # The official v1alpha1 SDK tunnel assumes svc/sandbox-router-svc:8080.
   provider: ${SANDBOX_PROVIDER:-local_shell}
   allow_agent_shell: true
   execute_requires_confirmation: true
@@ -32,11 +32,10 @@ sandbox:
     timeout_seconds: 30
     max_output_bytes: 20000
   gke:
-    namespace: agent-sandbox
-    template_name: deepagent-skill-runtime
-    warm_pool_name: deepagent-skill-runtime-pool
-    connection_mode: tunnel
-    router_namespace: agent-sandbox-system
+    namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
+    template_name: ${SANDBOX_TEMPLATE_NAME:-danaan-agent-sandbox-template}
+    connection_mode: direct
+    router_url: ${SANDBOX_ROUTER_URL:-http://127.0.0.1:38088}
     runtime_port: 38087
     absolute_ttl_seconds: 7200
 database:

@@ -9,8 +9,8 @@
 ```text
 Windows PowerShell
 ├─ 本项目 FastAPI / DeepAgent
-│  └─ 应用内 DeepAgents adapter + 官方 k8s-agent-sandbox（connection_mode=tunnel）
-│     └─ kubectl port-forward（由官方 SDK 自动管理）
+│  └─ 应用内 DeepAgents adapter + 官方 k8s-agent-sandbox（connection_mode=direct）
+│     └─ kubectl port-forward（开发者手动维护）
 │        └─ Docker Desktop Kubernetes 内的 Sandbox Router Service :8080
 │           └─ Sandbox Pod 的 runtime :38087
 │              └─ /workspace/skills/<skill>/scripts/*.py
@@ -26,7 +26,7 @@ Windows PowerShell
 
 | 组件 | 端口 | 配置位置 |
 | --- | ---: | --- |
-| Router Service | `8080` | Router manifest；本地 tunnel 的目标 |
+| Router Service | `8080` | Router manifest；本机手动 port-forward 的目标 |
 | Python runtime | `38087` | SandboxTemplate 的 `containerPort`、probe 与应用 `runtime_port` |
 | 本项目 API | `8000` | Windows 上运行的 FastAPI 服务 |
 
@@ -98,12 +98,12 @@ $WarmPoolName = 'deepagent-skill-runtime-pool'
 $RuntimePort = 38087
 $RouterImage = 'deepagent/sandbox-router:desktop-kind'
 $RuntimeImage = 'deepagent/skill-runtime:desktop-kind'
-$AgentSandboxVersion = 'v0.5.6'
+$AgentSandboxVersion = 'v0.4.6'
 $PocRoot = Join-Path $env:TEMP 'deepagent-agent-sandbox-poc'
 $UpstreamRoot = Join-Path $PocRoot 'agent-sandbox'
 ```
 
-> `v0.5.6` 与当前项目锁定的 `k8s-agent-sandbox==0.5.6` 对齐。升级时要同时验证 Controller、Router、SDK、CRD API version 与项目内 adapter，不能只升级其中一个。
+> `v0.4.6` 与当前项目锁定的 `k8s-agent-sandbox==0.4.6` 对齐，使用 `v1alpha1` CRD。升级时要同时验证 Controller、Router、SDK、CRD API version 与项目内 adapter，不能只升级其中一个。
 
 ## 5. 在 Docker Desktop 创建内置 Kind 集群
 
@@ -182,7 +182,7 @@ kubectl wait --for=condition=Available deployment -l app=sandbox-router `
 kubectl get deployment,service -n $ControllerNamespace -l app=sandbox-router
 ```
 
-Router Service 应保持 `ClusterIP`。本机的 tunnel 会访问它；不要为了本地测试创建公网 LoadBalancer 或 Ingress。
+Router Service 应保持 `ClusterIP`。本机通过 port-forward 访问它；不要为了本地测试创建公网 LoadBalancer 或 Ingress。
 
 ## 8. 构建 runtime 镜像（端口 38087、包含 Skill）
 
@@ -243,7 +243,7 @@ kubectl create namespace $SandboxNamespace
 
 ```powershell
 $TemplateManifest = @"
-apiVersion: extensions.agents.x-k8s.io/v1beta1
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxTemplate
 metadata:
   name: $TemplateName
@@ -279,7 +279,7 @@ spec:
               drop: ["ALL"]
       restartPolicy: OnFailure
 ---
-apiVersion: extensions.agents.x-k8s.io/v1beta1
+apiVersion: extensions.agents.x-k8s.io/v1alpha1
 kind: SandboxWarmPool
 metadata:
   name: $WarmPoolName
@@ -300,18 +300,27 @@ kubectl get pods -n $SandboxNamespace -w
 
 ## 10. 不经 DeepAgent 的 SDK 冒烟测试
 
-先验证基础设施，避免把 Controller/镜像问题误判为 Agent 问题。项目已安装 `k8s-agent-sandbox`，在项目虚拟环境创建 `$PocRoot/smoke.py`：
+先验证基础设施，避免把 Controller/镜像问题误判为 Agent 问题。先在独立 PowerShell 窗口保持 Router 转发：
+
+```powershell
+kubectl -n $ControllerNamespace port-forward svc/sandbox-router-svc 8080:8080
+```
+
+项目已安装 `k8s-agent-sandbox`，在项目虚拟环境创建 `$PocRoot/smoke.py`：
 
 ```powershell
 $SmokeScript = @"
 from k8s_agent_sandbox import SandboxClient
-from k8s_agent_sandbox.models import SandboxLocalTunnelConnectionConfig
+from k8s_agent_sandbox.models import SandboxDirectConnectionConfig
 
 client = SandboxClient(
-    connection_config=SandboxLocalTunnelConnectionConfig(server_port=38087)
+    connection_config=SandboxDirectConnectionConfig(
+        api_url='http://127.0.0.1:8080',
+        server_port=38087,
+    )
 )
 sandbox = client.create_sandbox(
-    warmpool='deepagent-skill-runtime-pool',
+    template='deepagent-skill-runtime',
     namespace='agent-sandbox',
 )
 try:
@@ -329,7 +338,7 @@ uv run python (Join-Path $PocRoot 'smoke.py')
 
 成功标准：
 
-- 自动创建到 Router 的本地 tunnel；
+- 通过手动 port-forward 连接 Router；
 - 创建 `SandboxClaim`，并由 WarmPool 领取一个 Pod；
 - 命令在 runtime 内返回 Python 版本，`exit_code` 为 `0`；
 - `terminate()` 后 Claim 被回收，WarmPool 自动补充预热 Pod。
@@ -366,14 +375,14 @@ $env:SANDBOX_PROVIDER = 'gke_agent'
 ```yaml
 provider: ${SANDBOX_PROVIDER:-local_shell}
 gke:
-  connection_mode: tunnel
-  namespace: agent-sandbox
-  template_name: deepagent-skill-runtime
-  warm_pool_name: deepagent-skill-runtime-pool
+  connection_mode: direct
+  namespace: ${SANDBOX_NAMESPACE:-agent-sandbox}
+  template_name: ${SANDBOX_TEMPLATE_NAME:-deepagent-skill-runtime}
+  router_url: ${SANDBOX_ROUTER_URL:-http://127.0.0.1:8080}
   runtime_port: 38087
 ```
 
-项目内 adapter 使用官方 `k8s-agent-sandbox==0.5.6` 实现 DeepAgents sandbox backend 协议。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 Sandbox Pod。
+项目内 adapter 使用官方 `k8s-agent-sandbox==0.4.6` 创建 `v1alpha1` Template Claim。每条 `run_skill_script` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 Sandbox Pod。
 
 ## 12. 常见故障
 
@@ -383,7 +392,7 @@ gke:
 | Controller 无 Ready | Docker Desktop 是否运行、Controller events/log、CRD 是否已安装 |
 | WarmPool `ImagePullBackOff` | Docker Desktop 的 containerd image store、镜像名、`imagePullPolicy: IfNotPresent`；必要时推送到私有 registry |
 | Router 不 Ready | Router manifest 的本地镜像是否替换成功，及 Service/Deployment 是否位于 `agent-sandbox-system` |
-| SDK tunnel 失败 | `kubectl` 在 PATH、context 正确、Router Service 名称为 `sandbox-router-svc` |
+| Router 连接失败 | 手动运行 `kubectl -n agent-sandbox-system port-forward svc/sandbox-router-svc 8080:8080`，并确认 `SANDBOX_ROUTER_URL=http://127.0.0.1:8080` |
 | `connection refused` / `/execute` 失败 | Template `containerPort`、probe、项目 `runtime_port`、Dockerfile CMD 必须全为 `38087` |
 | `execute` 未出现在 Agent | 确认 `$env:SANDBOX_PROVIDER = 'gke_agent'` 在启动进程中已设置 |
 | 应用启动后数据库异常 | 按 README 启动本地 PostgreSQL，并使用 `src\main.py` 入口 |

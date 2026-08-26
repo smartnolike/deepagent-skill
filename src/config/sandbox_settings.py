@@ -17,9 +17,7 @@ class GkeAgentSandboxSettings(BaseModel):
 
     namespace: str
     template_name: str
-    warm_pool_name: str
     connection_mode: Literal["tunnel", "direct"] = "direct"
-    router_namespace: str = "agent-sandbox-system"
     router_url: str | None = None
     router_auth_token: SecretStr | None = None
     runtime_port: int = Field(default=38_087, ge=1, le=65_535)

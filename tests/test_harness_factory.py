@@ -72,7 +72,6 @@ def test_gke_agent_exposes_only_the_confirmed_script_runner() -> None:
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",
-                    "warm_pool_name": "deepagent-runtime-pool",
                     "router_url": "http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080",
                 },
             },
@@ -95,7 +94,6 @@ def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",
-                    "warm_pool_name": "deepagent-runtime-pool",
                     "connection_mode": "tunnel",
                 },
             },
