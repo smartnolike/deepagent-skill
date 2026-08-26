@@ -10,6 +10,7 @@ from collections.abc import AsyncIterator
 
 from fastapi import APIRouter, Depends, Header, Query, Request, Response
 from fastapi.responses import StreamingResponse
+from google.cloud import storage
 
 from api.schemas.conversation_title import ConversationTitleRequest
 from common.language import resolve_response_language
@@ -78,6 +79,16 @@ async def list_messages(
     conversation_id: uuid.UUID, staff_id: str, accept_language: str | None = Header(default=None), service: ConversationService = Depends(_service)
 ) -> list[dict]:
     return await service.messages(conversation_id, staff_id, resolve_response_language(None, accept_language))
+
+
+@router.get("/{conversation_id}/artifacts/{artifact_id}/download")
+async def download_artifact(conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, request: Request, accept_language: str | None = Header(default=None), service: ConversationService = Depends(_service)) -> StreamingResponse:
+    artifact = await service.artifact(conversation_id, artifact_id, staff_id, resolve_response_language(None, accept_language))
+    bucket_name = request.app.state.settings.sandbox.gke.artifact_bucket if request.app.state.settings.sandbox.gke else None
+    if not bucket_name:
+        raise DomainError("ARTIFACT_STORAGE_DISABLED", "Artifact storage is disabled", 503)
+    content = await asyncio.to_thread(storage.Client().bucket(bucket_name).blob(artifact.object_key).download_as_bytes)
+    return StreamingResponse(iter([content]), media_type=artifact.content_type, headers={"Content-Disposition": f'attachment; filename="{artifact.filename}"'})
 
 
 @router.post("/{conversation_id}/messages")

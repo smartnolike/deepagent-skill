@@ -13,6 +13,7 @@ dependencies = [
   "deepagents>=0.1,<1",
   "fastapi>=0.115,<1",
   "google-cloud-secret-manager>=2.20,<3",
+  "google-cloud-storage>=2.20,<4",
   "greenlet>=3.1,<4",
   "httpx>=0.28,<1",
   "langgraph-checkpoint-postgres>=2,<4",
@@ -25,7 +26,9 @@ dependencies = [
   "PyYAML>=6,<7",
   "SQLAlchemy>=2.0,<3",
   "uvicorn[standard]>=0.34,<1",
-  "langchain-kubernetes[agent-sandbox]>=0.4.0",
+  # Keep the GKE client pinned: its SandboxClient API is consumed by our
+  # application-owned DeepAgents adapter.
+  "k8s-agent-sandbox==0.5.6",
 ]
 
 [project.optional-dependencies]

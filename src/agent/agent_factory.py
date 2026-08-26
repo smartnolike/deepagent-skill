@@ -25,7 +25,9 @@ from mcp_runtime.mcp_client_manager import McpClientManager
 from mcp_runtime.tool_registry import McpToolRegistry
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
-from sandbox.backend_factory import create_gke_sandbox_manager, create_sandbox_backend
+from sandbox.backend_factory import create_sandbox_backend
+from skills.script_catalog import ScriptCatalog
+from tools.skill_script_runner import GkeSkillScriptRunner
 from tools.registry import CustomToolRegistry
 
 
@@ -57,9 +59,13 @@ def create_agent_service(
     project_root = Path(__file__).resolve().parents[2]
     skills_root = project_root / settings.agent.skills_dir
     skill_paths = ["/"] if settings.agent.enabled_skills else []
+    tools = McpToolRegistry(mcp_manager).build() + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build()
+    if settings.sandbox.provider == "gke_agent":
+        if settings.sandbox.gke is None or session_factory is None:
+            raise RuntimeError("gke_agent script runner requires sandbox settings and database persistence")
+        tools.append(GkeSkillScriptRunner(settings.sandbox.gke, ScriptCatalog(skills_root, settings.agent.enabled_skills), session_factory).tool())
     graph_kwargs = {
-        "tools": McpToolRegistry(mcp_manager).build()
-        + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build(),
+        "tools": tools,
         "system_prompt": (
             f"{settings.agent.system_prompt}\n\n{_response_language_system_prompt()}\n\n"
             f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}"
@@ -72,33 +78,16 @@ def create_agent_service(
         "name": "deepagent-platform",
     }
     model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
-    if settings.sandbox.provider == "gke_agent":
-        # KubernetesSandboxManager is the third-party DeepAgents adapter. It
-        # lazily binds a KubernetesSandbox to the current LangGraph thread.
-        graph = create_gke_sandbox_manager(settings.sandbox).create_agent(
-            model,
-            checkpointer=checkpointer,
-            **graph_kwargs,
-        )
-    else:
-        graph = create_deep_agent(
-            model=model,
-            backend=create_sandbox_backend(settings.sandbox, skills_root),
-            checkpointer=checkpointer,
-            **graph_kwargs,
-        )
+    # Skill discovery and read-only inspection always stay in the API image.
+    # GKE is used only by the explicit, confirmation-gated script runner tool.
+    backend = create_sandbox_backend(settings.sandbox, skills_root)
+    graph = create_deep_agent(model=model, backend=backend, checkpointer=checkpointer, **graph_kwargs)
     return DeepAgentHarnessService(graph, observability)
 
 
 def _excluded_tools(settings: Settings) -> frozenset[str]:
-    """Expose execution only through an explicitly selected execution backend."""
-    excluded = {"delete", "write_file", "edit_file"}
-    execution_enabled = settings.sandbox.provider == "gke_agent" or (
-        settings.sandbox.provider == "local_shell" and settings.sandbox.allow_agent_shell
-    )
-    if not execution_enabled:
-        excluded.add("execute")
-    return frozenset(excluded)
+    """Only the dedicated Skill runner may execute code."""
+    return frozenset({"delete", "write_file", "edit_file", "execute"})
 
 
 def _confirmation_rules(mcp_manager: McpClientManager, settings: Settings) -> dict[str, dict[str, object]]:
@@ -115,14 +104,10 @@ def _confirmation_rules(mcp_manager: McpClientManager, settings: Settings) -> di
         "allowed_decisions": ["respond"],
         "description": "Provide the requested structured form values.",
     }
-    execution_enabled = settings.sandbox.provider == "gke_agent" or (
-        settings.sandbox.provider == "local_shell" and settings.sandbox.allow_agent_shell
-    )
-    if execution_enabled and settings.sandbox.execute_requires_confirmation:
-        environment = "the local development machine" if settings.sandbox.provider == "local_shell" else "the GKE sandbox"
-        rules["execute"] = {
+    if settings.sandbox.provider == "gke_agent" and settings.sandbox.execute_requires_confirmation:
+        rules["run_skill_script"] = {
             "allowed_decisions": ["approve", "reject"],
-            "description": f"Review and approve this command before it runs in {environment}.",
+            "description": "Review and approve this Skill script before it runs in the GKE sandbox.",
         }
     return rules
 

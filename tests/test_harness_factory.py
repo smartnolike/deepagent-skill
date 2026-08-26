@@ -18,7 +18,6 @@ from config.settings import Settings
 from mcp_runtime.mcp_client_manager import McpClientManager
 from services.memory_service import MemoryService
 from langgraph.store.memory import InMemoryStore
-from sandbox.backend_factory import create_gke_sandbox_manager
 
 
 def test_factory_requires_a_configured_model() -> None:
@@ -46,7 +45,7 @@ def test_confirmation_description_hides_mcp_implementation_details() -> None:
     assert _confirmation_description("danaan", "search") == "Review and approve this requested action."
 
 
-def test_local_shell_exposes_execute_with_confirmation() -> None:
+def test_local_shell_does_not_expose_generic_execute() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
@@ -57,14 +56,11 @@ def test_local_shell_exposes_execute_with_confirmation() -> None:
         }
     )
 
-    assert "execute" not in _excluded_tools(settings)
-    assert _confirmation_rules(McpClientManager(settings), settings)["execute"]["allowed_decisions"] == [
-        "approve",
-        "reject",
-    ]
+    assert "execute" in _excluded_tools(settings)
+    assert "run_skill_script" not in _confirmation_rules(McpClientManager(settings), settings)
 
 
-def test_gke_agent_uses_packaged_kubernetes_sandbox_manager() -> None:
+def test_gke_agent_exposes_only_the_confirmed_script_runner() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "dev",
@@ -83,18 +79,11 @@ def test_gke_agent_uses_packaged_kubernetes_sandbox_manager() -> None:
         }
     )
 
-    manager = create_gke_sandbox_manager(settings.sandbox)
-    provider_config = manager._provider._config
-    assert provider_config.connection_mode == "direct"
-    assert provider_config.api_url == settings.sandbox.gke.router_url
-    assert provider_config.server_port == 38_087
-    assert "execute" not in _excluded_tools(settings)
-    assert _confirmation_rules(McpClientManager(settings), settings)["execute"]["description"].endswith(
-        "the GKE sandbox."
-    )
+    assert "execute" in _excluded_tools(settings)
+    assert _confirmation_rules(McpClientManager(settings), settings)["run_skill_script"]["description"].endswith("GKE sandbox.")
 
 
-def test_kind_uses_packaged_kubernetes_tunnel() -> None:
+def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
@@ -113,10 +102,8 @@ def test_kind_uses_packaged_kubernetes_tunnel() -> None:
         }
     )
 
-    manager = create_gke_sandbox_manager(settings.sandbox)
-    provider_config = manager._provider._config
-    assert provider_config.connection_mode == "tunnel"
-    assert provider_config.api_url is None
+    assert settings.sandbox.gke is not None
+    assert settings.sandbox.gke.connection_mode == "tunnel"
 
 
 def test_skill_bound_prompt_limits_the_agent_to_enabled_skills() -> None:

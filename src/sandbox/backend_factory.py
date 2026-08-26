@@ -4,7 +4,6 @@ from pathlib import Path
 import sys
 
 from deepagents.backends import FilesystemBackend, LocalShellBackend
-from langchain_kubernetes import KubernetesProviderConfig, KubernetesSandboxManager
 
 from config.sandbox_settings import SandboxSettings
 
@@ -13,8 +12,8 @@ def create_sandbox_backend(settings: SandboxSettings, skills_root: Path):
     """Return a backend rooted at the installed Skill packages.
 
     ``LocalShellBackend`` is intentionally limited to an explicitly enabled
-    development configuration. It executes on the host and is never a GKE
-    fallback. GKE Agent Sandbox is created by :func:`create_gke_sandbox_manager`.
+    development configuration. GKE execution is exposed only by the dedicated
+    Skill runner tool, never as the Agent's filesystem backend.
     """
     if settings.provider == "filesystem":
         return FilesystemBackend(root_dir=skills_root)
@@ -36,34 +35,5 @@ def create_sandbox_backend(settings: SandboxSettings, skills_root: Path):
             },
         )
 
-    raise RuntimeError("gke_agent backends must be created through KubernetesSandboxManager")
-
-
-def create_gke_sandbox_manager(settings: SandboxSettings) -> KubernetesSandboxManager:
-    """Build the packaged DeepAgents/GKE integration for one application process.
-
-    ``langchain-kubernetes`` owns the DeepAgents sandbox protocol and uses the
-    official ``k8s-agent-sandbox`` client to claim warm-pool sandboxes and route
-    command traffic through the configured in-cluster Sandbox Router.
-    """
-    if settings.provider != "gke_agent" or settings.gke is None:
-        raise ValueError("create_gke_sandbox_manager requires sandbox.provider=gke_agent")
-
-    gke = settings.gke
-    provider_config = {
-        "mode": "agent-sandbox",
-        "namespace": gke.namespace,
-        "template_name": gke.template_name,
-        "warm_pool_name": gke.warm_pool_name,
-        "connection_mode": gke.connection_mode,
-        "server_port": gke.runtime_port,
-        "startup_timeout_seconds": gke.startup_timeout_seconds,
-        "default_exec_timeout": gke.command_timeout_seconds,
-    }
-    if gke.router_url is not None:
-        provider_config["api_url"] = gke.router_url
-    return KubernetesSandboxManager(
-        KubernetesProviderConfig(**provider_config),
-        ttl_idle_seconds=gke.idle_ttl_seconds,
-        default_labels={"application": "deepagent-platform"},
-    )
+    # Keep Skill inspection local when the script runner targets GKE.
+    return FilesystemBackend(root_dir=skills_root)

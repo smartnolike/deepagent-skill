@@ -22,6 +22,7 @@ from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
 from repositories.message_repository import MessageRepository
 from repositories.tool_confirmation_repository import ToolConfirmationRepository
+from repositories.script_artifact_repository import ScriptArtifactRepository
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
 
@@ -35,6 +36,7 @@ class ConversationService:
     def __init__(
         self, session: AsyncSession, agent_service: DeepAgentHarnessService, memory_service: MemoryService
     ) -> None:
+        self._session = session
         self._conversations = ConversationRepository(session)
         self._messages = MessageRepository(session)
         self._runs = AgentRunRepository(session)
@@ -85,6 +87,13 @@ class ConversationService:
             {"id": str(item.id), "role": item.role, "content": item.content, "created_at": item.created_at.isoformat()}
             for item in messages
         ]
+
+    async def artifact(self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage):
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        artifact = await ScriptArtifactRepository(self._session).get(artifact_id, conversation_id)
+        if artifact is None:
+            raise DomainError("ARTIFACT_NOT_FOUND", "Artifact not found", status.HTTP_404_NOT_FOUND)
+        return artifact
 
     async def tool_confirmations(
         self,

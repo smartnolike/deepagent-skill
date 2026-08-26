@@ -1,6 +1,6 @@
 # DeepAgent × GKE Agent Sandbox 开发方案
 
-> 状态：已评审的开发方案，尚未实现。本文覆盖“安装的 Skill 可在隔离工作区执行其脚本”的场景；固定、强业务语义脚本的受控 Job 方案见 [SKILL_SCRIPT_SANDBOX.md](SKILL_SCRIPT_SANDBOX.md)。
+> 状态：实施中。本文覆盖“安装的 Skill 可在隔离工作区执行其脚本”的场景；固定、强业务语义脚本的受控 Job 方案见 [SKILL_SCRIPT_SANDBOX.md](SKILL_SCRIPT_SANDBOX.md)。
 
 ## 1. 目标
 
@@ -12,8 +12,8 @@ Skill package
 └── scripts/                     # 可执行代码，随 Sandbox 镜像发布
     └── query.py
 
-conversation_id / LangGraph thread_id
-  → KubernetesSandboxManager
+run_skill_script（用户确认后）
+  → 应用内一次性 GKE Script Runner
   → GKE Agent Sandbox
   → gVisor Sandbox Pod
   → /workspace/skills/<skill-id>/scripts/query.py
@@ -30,10 +30,11 @@ conversation_id / LangGraph thread_id
 | GKE Agent Sandbox add-on | Google 托管的 Controller、CRD、Template、Claim、WarmPool 能力 |
 | GKE Sandbox / gVisor | Sandbox Pod 的运行时隔离 |
 | `k8s-agent-sandbox` | 与 GKE Agent Sandbox 通讯的 Python SDK；同集群可直接连接 Sandbox Pod |
-| `langchain-kubernetes` | DeepAgents sandbox backend 适配器 |
-| `KubernetesSandboxManager` | 以 LangGraph thread 为单位创建、重连和回收 sandbox |
+| `FilesystemBackend` | API 镜像中只读浏览 `SKILL.md` 与已审阅脚本；`ls` 不访问 GKE |
+| `ScriptCatalog` | 启动时扫描已启用 Skill 的 `scripts/*.py`，形成内存白名单 |
+| 应用内 GKE Script Runner | 仅执行确认后的固定脚本，下载 `.xlsx` 产物后立即终止 Claim |
 
-选择 `langchain-kubernetes[agent-sandbox]` 时，无需自行实现 DeepAgents backend：该包将 DeepAgents 的 `execute()` 与文件操作适配到 GKE Agent Sandbox。`k8s-agent-sandbox` 自身只是底层 SDK，不能直接作为 DeepAgents backend。
+项目直接固定官方 `k8s-agent-sandbox==0.5.6`，并维护很薄的一次性 Script Runner。此前评估的第三方 `langchain-kubernetes` 与该 SDK 的 `SandboxClient` API 不兼容，因此不作为生产依赖。
 
 此方案会让 Agent 获得沙盒内的 `execute`、文件读写和编辑能力；它不是“只允许执行一个固定 Python 文件”的模型。固定、高风险的业务脚本仍应使用语义 Tool、HITL 与受控 GKE Job，见 [SKILL_SCRIPT_SANDBOX.md](SKILL_SCRIPT_SANDBOX.md)。
 
@@ -84,7 +85,7 @@ prod FastAPI（在 prod GKE）
 
 1. 启用 GKE Agent Sandbox，建立 gVisor 专用节点池；
 2. 验证 add-on 已提供 Controller 和 CRD；不要在 GKE 上额外应用开源 Controller/CRD release manifest；
-3. 按连接模式决定是否部署 Sandbox Router：local tunnel、Gateway 或采用依赖 Router 的适配器时需要；应用使用 SDK in-cluster direct 连接 Sandbox Pod 时不需要；
+3. 部署 Sandbox Router：local tunnel 与集群内 direct Router URL 都使用它；默认 GKE 网络策略只允许 Router 进入 Sandbox Pod；
 4. 创建 `agent-sandbox-dev` 或 `agent-sandbox-prod` namespace；
 5. 应用 Pod Security `restricted`、ResourceQuota、LimitRange 和默认拒绝 egress 的 NetworkPolicy；
 6. 配置 Agent API ServiceAccount，使其仅能管理本 namespace 的 sandbox 资源；
@@ -183,12 +184,12 @@ ttl_idle_seconds
 增加 Python 依赖：
 
 ```text
-langchain-kubernetes[agent-sandbox]
+k8s-agent-sandbox==0.5.6
 ```
 
 ### 7.2 DeepAgent Harness
 
-用 `KubernetesSandboxManager` 将 sandbox 与现有 `conversation_id == LangGraph thread_id` 对齐：
+`conversation_id` 仅用于归属下载产物；SandboxClaim 不跨会话或跨轮复用：
 
 ```text
 conversation_id
@@ -196,7 +197,7 @@ conversation_id
   → 同一会话重连同一 sandbox
 ```
 
-现有 `create_agent_service()` 必须继续保留 MCP Tools、自定义 Tools、Skills、系统提示、Postgres checkpointer、HITL confirmation、语言中间件和 SSE。先做兼容性 spike，验证 `KubernetesSandboxManager.create_agent()` 能保留这些参数；若无法保留，再增加薄的应用内包装层。
+现有 `create_agent_service()` 保留 MCP Tools、自定义 Tools、Skills、系统提示、Postgres checkpointer、HITL confirmation、语言中间件和 SSE；应用内 adapter 作为 `create_deep_agent(backend=...)` 的 backend factory 接入。
 
 仅在 `sandbox.enabled=true` 时，移除 Harness 对 `execute`、`write_file`、`edit_file` 的排除。`delete` 默认继续排除，除非产品明确允许 Agent 删除 sandbox 文件。
 
@@ -247,7 +248,7 @@ TTL 后删除 sandbox；同一会话后续请求创建新 sandbox。新 sandbox 
 
 ### Milestone 2：独立兼容性 Spike
 
-- 使用 `langchain-kubernetes[agent-sandbox]` 验证创建、复用、执行、文件读写、超时、输出截断、TTL、删除和 WarmPool；
+- 使用官方 SDK 与应用内 adapter 验证创建、复用、执行、文件读写、超时、输出截断、TTL、删除和 WarmPool；
 - 验证 local `tunnel` 和 in-cluster `direct`；
 - 此阶段不修改现有 Agent 主流程。
 
@@ -258,7 +259,7 @@ TTL 后删除 sandbox；同一会话后续请求创建新 sandbox。新 sandbox 
 
 ### Milestone 4：Harness 接入
 
-- 接入 `KubernetesSandboxManager` 并实现 conversation 级生命周期；
+- 接入受控 `run_skill_script`、`ScriptCatalog` 与私有对象存储产物下载；
 - 通过 feature flag 开放 sandbox 工具；
 - 验收：同会话跨轮复用文件，不同会话不互通，原有 MCP/HITL/SSE 测试继续通过。
 
@@ -285,4 +286,4 @@ TTL 后删除 sandbox；同一会话后续请求创建新 sandbox。新 sandbox 
 - [LangChain Sandbox Integrations](https://docs.langchain.com/oss/python/integrations/sandboxes)
 - [GKE Agent Sandbox](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox)
 - [GKE Sandbox with gVisor](https://docs.cloud.google.com/kubernetes-engine/docs/how-to/sandbox-pods)
-- [langchain-kubernetes on PyPI](https://pypi.org/project/langchain-kubernetes/)
+- [官方 k8s-agent-sandbox Python SDK](https://pypi.org/project/k8s-agent-sandbox/)

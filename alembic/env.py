@@ -7,7 +7,7 @@ from sqlalchemy import engine_from_config, pool
 
 from config.load_settings import load_settings
 from database.base import Base
-from database.models.agent import agent_run, conversation, message, tool_confirmation  # noqa: F401
+from database.models.agent import agent_run, conversation, message, script_artifact, tool_confirmation  # noqa: F401
 
 config = context.config
 # 项目安装的是 psycopg3；Alembic 的同步 Engine 必须显式选择 psycopg 方言，不能回退到 psycopg2。

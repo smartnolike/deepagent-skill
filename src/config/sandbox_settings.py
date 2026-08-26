@@ -2,7 +2,7 @@
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, SecretStr, model_validator
 
 
 class LocalShellSettings(BaseModel):
@@ -13,17 +13,22 @@ class LocalShellSettings(BaseModel):
 
 
 class GkeAgentSandboxSettings(BaseModel):
-    """Settings for langchain-kubernetes Agent Sandbox mode."""
+    """Settings for the official GKE Agent Sandbox Python client."""
 
     namespace: str
     template_name: str
     warm_pool_name: str
     connection_mode: Literal["tunnel", "direct"] = "direct"
+    router_namespace: str = "agent-sandbox-system"
     router_url: str | None = None
+    router_auth_token: SecretStr | None = None
     runtime_port: int = Field(default=38_087, ge=1, le=65_535)
     startup_timeout_seconds: int = Field(default=120, ge=1, le=600)
     command_timeout_seconds: int = Field(default=120, ge=1, le=3_600)
     idle_ttl_seconds: int = Field(default=1_800, ge=60)
+    absolute_ttl_seconds: int = Field(default=7_200, ge=60)
+    artifact_bucket: str | None = None
+    artifact_prefix: str = "deepagent-script-artifacts"
 
 
 class SandboxSettings(BaseModel):

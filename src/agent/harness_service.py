@@ -89,6 +89,7 @@ class DeepAgentHarnessService:
             }
         return config
 
+
     async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, str]]]:
         """将普通消息和 LangGraph HITL interrupt 统一转换为 API SSE 事件。"""
         active_tool_names: list[str] = []

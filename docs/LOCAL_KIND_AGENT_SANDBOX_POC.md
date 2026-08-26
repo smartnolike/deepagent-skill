@@ -9,8 +9,8 @@
 ```text
 Windows PowerShell
 ├─ 本项目 FastAPI / DeepAgent
-│  └─ langchain-kubernetes（connection_mode=tunnel）
-│     └─ kubectl port-forward（由依赖自动管理）
+│  └─ 应用内 DeepAgents adapter + 官方 k8s-agent-sandbox（connection_mode=tunnel）
+│     └─ kubectl port-forward（由官方 SDK 自动管理）
 │        └─ Docker Desktop Kubernetes 内的 Sandbox Router Service :8080
 │           └─ Sandbox Pod 的 runtime :38087
 │              └─ /workspace/skills/<skill>/scripts/*.py
@@ -103,7 +103,7 @@ $PocRoot = Join-Path $env:TEMP 'deepagent-agent-sandbox-poc'
 $UpstreamRoot = Join-Path $PocRoot 'agent-sandbox'
 ```
 
-> `v0.5.6` 与当前项目锁定的 `k8s-agent-sandbox==0.5.6` 对齐。升级时要同时验证 Controller、Router、SDK、CRD API version 与 `langchain-kubernetes` 的兼容性，不能只升级其中一个。
+> `v0.5.6` 与当前项目锁定的 `k8s-agent-sandbox==0.5.6` 对齐。升级时要同时验证 Controller、Router、SDK、CRD API version 与项目内 adapter，不能只升级其中一个。
 
 ## 5. 在 Docker Desktop 创建内置 Kind 集群
 
@@ -373,7 +373,7 @@ gke:
   runtime_port: 38087
 ```
 
-`langchain-kubernetes` 会实现 DeepAgents 的 sandbox backend 协议；无需自研 GKE/kind adapter。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 Sandbox Pod。
+项目内 adapter 使用官方 `k8s-agent-sandbox==0.5.6` 实现 DeepAgents sandbox backend 协议。每条 `execute` 仍先进入应用既有的人工确认 SSE 流程，确认后才会发往 Sandbox Pod。
 
 ## 12. 常见故障
 
@@ -414,5 +414,5 @@ Remove-Item -Recurse -Force $PocRoot
 - [Docker Desktop Kubernetes（Kind provisioner）](https://docs.docker.com/desktop/use-desktop/kubernetes/)
 - [Python runtime 示例](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/examples/python-runtime-sandbox)
 - [Sandbox Router 源码与 manifest](https://github.com/kubernetes-sigs/agent-sandbox/tree/main/clients/python/agentic-sandbox-client/sandbox-router)
-- [langchain-kubernetes](https://pypi.org/project/langchain-kubernetes/)
+- [官方 k8s-agent-sandbox Python SDK](https://pypi.org/project/k8s-agent-sandbox/)
 - [GKE Agent Sandbox 官方文档](https://cloud.google.com/kubernetes-engine/docs/how-to/agent-sandbox)

@@ -23,6 +23,8 @@ agent:
 #     connection_mode: direct
 #     router_url: http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080
 #     runtime_port: 38087
+#     router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN}
+#     absolute_ttl_seconds: 14400
 database:
   host: 127.0.0.1
   port: 5432

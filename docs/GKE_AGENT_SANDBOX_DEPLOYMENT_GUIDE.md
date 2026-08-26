@@ -20,7 +20,7 @@ dev/prod DeepAgent API（位于 GKE）
   → gVisor Sandbox Pod
 ```
 
-GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；`langchain-kubernetes[agent-sandbox]` 负责把 DeepAgents 的 sandbox backend 调用映射到这套基础设施。Sandbox Router 是可选的访问层：local tunnel、Gateway 或依赖 Router 的适配器需要它；应用通过 Google SDK 在同集群直接连接 Sandbox Pod 时不需要它。更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
+GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；项目内薄 adapter 使用官方 `k8s-agent-sandbox==0.5.6` 映射 DeepAgents backend 调用。Sandbox Router 是 local tunnel 与集群内 direct Router URL 的稳定访问层；更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
 
 ## 2. 官方资料
 
@@ -286,7 +286,7 @@ finally:
 
 ### 8.2 dev/prod：in-cluster direct
 
-DeepAgent API 部署在相同集群后，配置 `langchain-kubernetes[agent-sandbox]` 使用 `connection_mode="direct"`，`api_url` 指向 Router 的 ClusterIP DNS。不要运行 `kubectl port-forward`，不要把用户 kubeconfig 放进 API Pod。
+DeepAgent API 部署在相同集群后，配置项目内官方 SDK adapter 使用 `connection_mode="direct"`，`router_url` 指向 Router 的 ClusterIP DNS。不要运行 `kubectl port-forward`，不要把用户 kubeconfig 放进 API Pod。
 
 应用 ServiceAccount 只授予创建、查看和删除目标 namespace Sandbox 资源所需的最小 RBAC。Sandbox Pod 自身保持 `automountServiceAccountToken: false`；仅当某个 Skill 确需 Google Cloud API 时，额外配置专属 Kubernetes ServiceAccount 与最小 Workload Identity 权限。
 
