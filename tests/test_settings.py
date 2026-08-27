@@ -33,14 +33,13 @@ def test_local_shell_rejects_execution_without_human_confirmation() -> None:
                 "mcp_servers": {},
                 "sandbox": {
                     "provider": "local_shell",
-                    "allow_agent_shell": True,
                     "execute_requires_confirmation": False,
                 },
             }
         )
 
 
-def test_gke_agent_requires_connection_settings() -> None:
+def test_gke_backend_requires_connection_settings() -> None:
     with pytest.raises(ValidationError, match="sandbox.gke is required"):
         Settings.model_validate(
             {
@@ -48,12 +47,12 @@ def test_gke_agent_requires_connection_settings() -> None:
                 "database": {"host": "x", "name": "x", "user": "x"},
                 "api_auth_token": "x",
                 "mcp_servers": {},
-                "sandbox": {"provider": "gke_agent"},
+                "sandbox": {"provider": "gke_backend"},
             }
         )
 
 
-def test_gke_agent_requires_a_template() -> None:
+def test_gke_backend_requires_a_template() -> None:
     with pytest.raises(ValidationError, match="template_name"):
         Settings.model_validate(
             {
@@ -62,7 +61,7 @@ def test_gke_agent_requires_a_template() -> None:
                 "api_auth_token": "x",
                 "mcp_servers": {},
                 "sandbox": {
-                    "provider": "gke_agent",
+                    "provider": "gke_backend",
                     "gke": {
                         "namespace": "agent-sandbox",
                         "router_url": "http://sandbox-router:8080",
@@ -80,7 +79,7 @@ def test_gke_tunnel_does_not_require_a_router_url() -> None:
             "api_auth_token": "x",
             "mcp_servers": {},
             "sandbox": {
-                "provider": "gke_agent",
+                "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",

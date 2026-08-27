@@ -21,22 +21,21 @@ agent:
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
 sandbox:
-  # Default: LocalShellBackend runs commands directly on this developer machine.
-  # To integration-test a Skill against dev GKE, launch with
-  # SANDBOX_PROVIDER=gke_agent and use direct mode plus a manual port-forward.
-  # The official v1alpha1 SDK tunnel assumes svc/sandbox-router-svc:8080.
-  provider: ${SANDBOX_PROVIDER:-local_shell}
-  allow_agent_shell: true
+  # filesystem validates Skills without execution. local_shell is developer-only;
+  # gke_backend reaches dev GKE through a manually forwarded Router Service.
+  provider: ${SANDBOX_PROVIDER:-filesystem}
   execute_requires_confirmation: true
   local_shell:
     timeout_seconds: 30
     max_output_bytes: 20000
+    workspace_root: .runtime/deepagent-workspaces
   gke:
     namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
     template_name: ${SANDBOX_TEMPLATE_NAME:-danaan-agent-sandbox-template}
     connection_mode: direct
     router_url: ${SANDBOX_ROUTER_URL:-http://127.0.0.1:38088}
     runtime_port: 38087
+    idle_ttl_seconds: 900
     absolute_ttl_seconds: 7200
 database:
   host: localhost

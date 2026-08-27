@@ -5,6 +5,7 @@
 from .agent.agent_run import AgentRun
 from .agent.conversation import Conversation
 from .agent.message import Message
-from .agent.script_artifact import ScriptArtifact
+from .agent.sandbox_artifact import SandboxArtifact
+from .agent.sandbox_session import SandboxSession
 
-__all__ = ["AgentRun", "Conversation", "Message", "ScriptArtifact"]
+__all__ = ["AgentRun", "Conversation", "Message", "SandboxArtifact", "SandboxSession"]

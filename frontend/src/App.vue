@@ -8,6 +8,8 @@ import 'x-markdown-vue/style'
 import {
   confirmTool,
   createConversation,
+  downloadArtifact,
+  listArtifacts,
   listConversations,
   listMessages,
   listPendingToolConfirmations,
@@ -81,10 +83,16 @@ async function selectConversation(conversationId: string): Promise<void> {
   confirmation.value = undefined
   formRequest.value = undefined
   try {
-    const [history, pendingConfirmations] = await Promise.all([
+    const [history, pendingConfirmations, artifacts] = await Promise.all([
       listMessages(conversationId, staffId.value),
       listPendingToolConfirmations(conversationId, staffId.value),
+      listArtifacts(conversationId, staffId.value),
     ])
+    if (artifacts.length) {
+      const target = [...history].reverse().find((message) => message.role === 'assistant')
+      if (target) target.artifacts = artifacts
+      else history.push({ content: 'Generated files', role: 'assistant', placement: 'start', artifacts })
+    }
     messages.value = history
     confirmation.value = pendingConfirmations[0]
   } catch (error) {
@@ -201,6 +209,10 @@ function handleEvent(event: StreamEvent, assistant: ChatMessage): void {
     Object.keys(formValues).forEach((key) => delete formValues[key])
     Object.assign(formValues, event.form.prefilledValues)
   }
+  if (event.type === 'artifact_created') {
+    const artifacts = assistant.artifacts || (assistant.artifacts = [])
+    if (!artifacts.some((artifact) => artifact.id === event.artifact.id)) artifacts.push(event.artifact)
+  }
   if (event.type === 'done') finalizeActivities(assistant)
   if (event.type === 'error') {
     assistant.content = event.message
@@ -216,6 +228,15 @@ function createAssistantMessage(): ChatMessage {
     loading: true,
     activities: [{ id: 'agent', label: 'Processing request', status: 'running' }],
   })
+}
+
+async function saveArtifact(artifact: NonNullable<ChatMessage['artifacts']>[number]): Promise<void> {
+  if (!activeConversationId.value) return
+  try {
+    await downloadArtifact(activeConversationId.value, staffId.value, artifact)
+  } catch (error) {
+    ElMessage.error(messageOf(error))
+  }
 }
 
 function upsertActivity(
@@ -328,6 +349,14 @@ function messageOf(error: unknown): string {
               class="assistant-markdown"
             />
             <span v-else class="plain-message">{{ item.content }}</span>
+            <div v-if="item.artifacts?.length" class="message-artifacts">
+              <el-button
+                v-for="artifact in item.artifacts"
+                :key="artifact.id"
+                size="small"
+                @click="saveArtifact(artifact)"
+              >Download {{ artifact.filename }}</el-button>
+            </div>
           </template>
         </BubbleList>
       </main>

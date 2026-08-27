@@ -4,25 +4,27 @@ from __future__ import annotations
 
 # 会话服务只协调持久化与 Agent 生命周期，Agent 推理期间不持有数据库事务。
 
-import uuid
-import logging
 import asyncio
+import logging
+import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.harness_service import DeepAgentHarnessService
-from common.language import ResponseLanguage
-from common.language import resolve_response_language
+from common.language import ResponseLanguage, resolve_response_language
 from core.errors import DomainError
 from database.models.agent.agent_run import AgentRun
 from database.models.agent.tool_confirmation import ToolConfirmation
 from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
 from repositories.message_repository import MessageRepository
+from repositories.sandbox_artifact_repository import SandboxArtifactRepository
+from repositories.sandbox_session_repository import SandboxSessionRepository
 from repositories.tool_confirmation_repository import ToolConfirmationRepository
-from repositories.script_artifact_repository import ScriptArtifactRepository
+from sandbox.workspace_manager import WorkspaceReference
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
 
@@ -77,6 +79,16 @@ class ConversationService:
 
     async def delete(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> None:
         conversation = await self._require_conversation(conversation_id, staff_id, response_language)
+        workspace_manager = getattr(self._agent_service, "workspace_manager", None)
+        if workspace_manager is not None:
+            try:
+                await asyncio.to_thread(workspace_manager.release, conversation_id)
+            except Exception as exc:
+                logger.warning(
+                    "conversation_workspace_release_failed conversation_id=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
         await self._conversations.delete(conversation)
         logger.info("conversation_deleted conversation_id=%s staff_id=%s", conversation_id, staff_id)
 
@@ -90,10 +102,47 @@ class ConversationService:
 
     async def artifact(self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage):
         await self._require_conversation(conversation_id, staff_id, response_language)
-        artifact = await ScriptArtifactRepository(self._session).get(artifact_id, conversation_id)
+        artifact = await SandboxArtifactRepository(self._session).get(artifact_id, conversation_id)
         if artifact is None:
             raise DomainError("ARTIFACT_NOT_FOUND", "Artifact not found", status.HTTP_404_NOT_FOUND)
         return artifact
+
+    async def artifacts(
+        self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
+    ) -> list[dict[str, object]]:
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        workspace = await SandboxSessionRepository(self._session).get(conversation_id)
+        if workspace is None:
+            return []
+        artifacts = await SandboxArtifactRepository(self._session).list(conversation_id, workspace.id)
+        now = datetime.now(UTC)
+        return [
+            {"id": str(item.id), "filename": item.filename, "size_bytes": item.size_bytes}
+            for item in artifacts
+            if item.expires_at is None or item.expires_at > now
+        ]
+
+    async def download_artifact(
+        self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
+    ) -> tuple[bytes, object]:
+        artifact = await self.artifact(conversation_id, artifact_id, staff_id, response_language)
+        if artifact.expires_at is not None and artifact.expires_at <= datetime.now(UTC):
+            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE)
+        workspace = await SandboxSessionRepository(self._session).get(conversation_id)
+        if workspace is None or workspace.id != artifact.sandbox_session_id or workspace.status != "active":
+            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE)
+        manager = getattr(self._agent_service, "workspace_manager", None)
+        if manager is None:
+            raise DomainError("ARTIFACT_STORAGE_DISABLED", "Workspace artifacts are disabled", status.HTTP_503_SERVICE_UNAVAILABLE)
+        reference = WorkspaceReference(
+            workspace.id, workspace.provider, workspace.workspace_reference, workspace.namespace, workspace.expires_at
+        )
+        try:
+            content = await asyncio.to_thread(manager.download_artifact, reference, artifact.sandbox_path)
+        except Exception as exc:
+            logger.info("workspace_artifact_unavailable artifact_id=%s error_type=%s", artifact_id, type(exc).__name__)
+            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE) from exc
+        return content, artifact
 
     async def tool_confirmations(
         self,

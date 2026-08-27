@@ -13,7 +13,6 @@ dependencies = [
   "deepagents>=0.1,<1",
   "fastapi>=0.115,<1",
   "google-cloud-secret-manager>=2.20,<3",
-  "google-cloud-storage>=2.20,<4",
   "greenlet>=3.1,<4",
   "httpx>=0.28,<1",
   "langgraph-checkpoint-postgres>=2,<4",

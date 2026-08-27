@@ -20,7 +20,7 @@ dev/prod DeepAgent API（位于 GKE）
   → gVisor Sandbox Pod
 ```
 
-GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；项目内 Script Runner 使用官方 `k8s-agent-sandbox==0.4.6`，与 GKE 当前托管的 `extensions.agents.x-k8s.io/v1alpha1` CRD 对应。Claim 通过 `SandboxTemplate` 创建，Controller 自动从匹配的 WarmPool 领取预热 Pod；不要在此 GKE 模式中使用请求 `v1beta1` 的 `0.5.x` SDK。Sandbox Router 是脚本、文件 I/O 的稳定访问层；更多上下文见 [GKE Agent Sandbox 开发方案](GKE_AGENT_SANDBOX_DEVELOPMENT_PLAN.md)。
+GKE Agent Sandbox add-on 管理 Sandbox Controller、CRD、Claim、Template 和 WarmPool 的运行时能力；项目内会话工作区 Backend 使用官方 `k8s-agent-sandbox==0.4.6`，与 GKE 当前托管的 `extensions.agents.x-k8s.io/v1alpha1` CRD 对应。Claim 通过 `SandboxTemplate` 创建，Controller 自动从匹配的 WarmPool 领取预热 Pod；不要在此 GKE 模式中使用请求 `v1beta1` 的 `0.5.x` SDK。Sandbox Router 是原生 `execute`、文件 I/O 和下载的稳定访问层；应用不再使用一次性 Script Runner 或 GCS artifact。更多上下文见 [会话工作区 Backend](WORKSPACE_SANDBOX_BACKENDS.md)。
 
 ## 2. 官方资料
 

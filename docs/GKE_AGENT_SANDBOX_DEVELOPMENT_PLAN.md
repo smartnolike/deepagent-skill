@@ -1,6 +1,6 @@
-# DeepAgent × GKE Agent Sandbox 开发方案
+# DeepAgent × GKE Agent Sandbox 开发方案（历史稿）
 
-> 状态：实施中。本文覆盖“安装的 Skill 可在隔离工作区执行其脚本”的场景；固定、强业务语义脚本的受控 Job 方案见 [SKILL_SCRIPT_SANDBOX.md](SKILL_SCRIPT_SANDBOX.md)。
+> 状态：已由 [WORKSPACE_SANDBOX_BACKENDS.md](WORKSPACE_SANDBOX_BACKENDS.md) 取代。本文后续内容仅保留设计过程，不作为当前实现依据。
 
 ## 1. 目标
 

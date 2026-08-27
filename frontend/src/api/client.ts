@@ -11,6 +11,13 @@ export interface ChatMessage {
   placement: 'start' | 'end'
   loading?: boolean
   activities?: AgentActivity[]
+  artifacts?: Artifact[]
+}
+
+export interface Artifact {
+  id: string
+  filename: string
+  sizeBytes: number
 }
 
 export type AgentActivityStatus = 'running' | 'completed' | 'waiting' | 'error'
@@ -51,6 +58,7 @@ export type StreamEvent =
   | { type: 'tool_end'; name: string }
   | { type: 'confirmation_required'; confirmation: ConfirmationRequest }
   | { type: 'form_required'; form: FormRequest }
+  | { type: 'artifact_created'; artifact: Artifact }
   | { type: 'done' }
   | { type: 'error'; message: string }
 
@@ -88,6 +96,13 @@ export async function listMessages(conversationId: string, staffId: string): Pro
     ...message,
     placement: message.role === 'user' ? 'end' : 'start',
   }))
+}
+
+export async function listArtifacts(conversationId: string, staffId: string): Promise<Artifact[]> {
+  const response = await request<{ items: Array<{ id: string; filename: string; size_bytes: number }> }>(
+    `/agent/api/conversations/${conversationId}/artifacts?staff_id=${encodeURIComponent(staffId)}`,
+  )
+  return response.items.map((item) => ({ id: item.id, filename: item.filename, sizeBytes: item.size_bytes }))
 }
 
 export async function listPendingToolConfirmations(
@@ -140,6 +155,23 @@ export async function respondToForm(
   await readSse(response, onEvent)
 }
 
+export async function downloadArtifact(conversationId: string, staffId: string, artifact: Artifact): Promise<void> {
+  const response = await fetch(
+    `/agent/api/conversations/${conversationId}/artifacts/${artifact.id}/download?staff_id=${encodeURIComponent(staffId)}`,
+    { headers: headers() },
+  )
+  if (!response.ok) {
+    const body = await response.json().catch(() => ({ message: response.statusText }))
+    throw new Error(body.message || 'Unable to download artifact')
+  }
+  const url = URL.createObjectURL(await response.blob())
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = artifact.filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 async function readSse(response: Response, onEvent: (event: StreamEvent) => void): Promise<void> {
   if (!response.ok || response.body === null) {
     throw new Error('Unable to open the streaming response')
@@ -180,6 +212,13 @@ function parseEvent(block: string, onEvent: (event: StreamEvent) => void): void 
       title: String(data.title || 'Resource information'),
       fields,
       prefilledValues,
+    } })
+  }
+  if (event === 'artifact_created') {
+    onEvent({ type: 'artifact_created', artifact: {
+      id: String(data.artifact_id || ''),
+      filename: String(data.filename || 'download'),
+      sizeBytes: Number(data.size_bytes || 0),
     } })
   }
   if (event === 'done') onEvent({ type: 'done' })

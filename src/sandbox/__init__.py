@@ -1,1 +1,1 @@
-"""Execution backend selection for Skill scripts."""
+"""Conversation-scoped DeepAgents workspace backends."""

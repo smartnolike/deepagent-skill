@@ -47,6 +47,22 @@ set AGENT_ENV=local
 `agent.model`、PostgreSQL 与 HTTP MCP；测试中的 Agent、数据库与 MCP 替身仅在测试层注入，生产代码不提供 Mock fallback。
 DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `agent.enabled_skills` 启用。
 
+## 会话工作区与 Sandbox Backend
+
+`sandbox.provider` 支持三种模式：`filesystem` 仅只读加载 Skill，适合最快的本地指令测试；
+`local_shell` 为每个会话创建独立本机工作区并暴露原生 `execute`，适合集成测试；`gke_backend`
+为每个会话创建或重连一个 GKE Agent Sandbox，供 dev/prod 使用。GKE 客户端固定为
+`k8s-agent-sandbox==0.4.6`，以匹配当前托管控制器的 `v1alpha1` API。
+
+Skill 源码目录不改名，仍为 `skill-packages/`。Sandbox runtime 镜像将它复制到只读的
+`/workspace/skill-packages`；脚本的中间文件放 `/workspace/work`，供后续脚本继续读取；最终文件写入
+`/workspace/output`（也可用短路径 `/work`、`/output`）。Agent 调用 `publish_artifact` 后，前端从当前
+Sandbox 实时下载文件；没有 GCS 或其他对象存储兜底，因此 Sandbox 到期后下载接口返回 `410`。
+
+`sandbox.execute_requires_confirmation` 默认为 `true`，会让 DeepAgents 原生 `execute` 进入 HITL 审批。
+GKE 环境可显式改为 `false`；`local_shell` 开启执行能力时强制保留审批，防止本地误执行。完整配置、
+生命周期和镜像约定见 [工作区 Backend 设计](docs/WORKSPACE_SANDBOX_BACKENDS.md)。
+
 `danaan-cloud-resource` 的 `danaan-base-context` 表单提交后，会自动保存
 `resourceOnboardRegion`、`applicationName`、`eimId`、`envName` 与 `useCaseShortName` 到 LangGraph
 PostgreSQL Store 的 `danaan-cloud-resource:base-context` key。下一次 Danaan 申请会精确读取该 key，并要求

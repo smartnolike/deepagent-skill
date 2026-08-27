@@ -25,9 +25,7 @@ from mcp_runtime.mcp_client_manager import McpClientManager
 from mcp_runtime.tool_registry import McpToolRegistry
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
-from sandbox.backend_factory import create_sandbox_backend
-from skills.script_catalog import ScriptCatalog
-from tools.skill_script_runner import GkeSkillScriptRunner
+from sandbox.workspace_manager import WorkspaceManager
 from tools.registry import CustomToolRegistry
 
 
@@ -58,36 +56,33 @@ def create_agent_service(
     # 因此来源必须是 /，由 DeepAgents 扫描其下的 */SKILL.md。
     project_root = Path(__file__).resolve().parents[2]
     skills_root = project_root / settings.agent.skills_dir
-    skill_paths = ["/"] if settings.agent.enabled_skills else []
-    tools = McpToolRegistry(mcp_manager).build() + CustomToolRegistry(settings.tools, httpx_client, session_factory, memory_service).build()
-    if settings.sandbox.provider == "gke_agent":
-        if settings.sandbox.gke is None or session_factory is None:
-            raise RuntimeError("gke_agent script runner requires sandbox settings and database persistence")
-        tools.append(GkeSkillScriptRunner(settings.sandbox.gke, ScriptCatalog(skills_root, settings.agent.enabled_skills), session_factory).tool())
+    workspace_manager = WorkspaceManager(settings.sandbox, skills_root, settings.psycopg_url)
+    tools = McpToolRegistry(mcp_manager).build() + CustomToolRegistry(
+        settings.tools, httpx_client, session_factory, memory_service, workspace_manager
+    ).build()
     graph_kwargs = {
         "tools": tools,
         "system_prompt": (
             f"{settings.agent.system_prompt}\n\n{_response_language_system_prompt()}\n\n"
-            f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}"
+            f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}\n\n{_workspace_system_prompt(settings)}"
         ),
-        "skills": skill_paths,
-        "permissions": [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")],
+        "skills": [workspace_manager.skills_path] if settings.agent.enabled_skills else [],
+        "permissions": _workspace_permissions(settings),
         "context_schema": AgentContext,
         "interrupt_on": _confirmation_rules(mcp_manager, settings),
         "middleware": [ResponseLanguageMiddleware()],
         "name": "deepagent-platform",
     }
     model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
-    # Skill discovery and read-only inspection always stay in the API image.
-    # GKE is used only by the explicit, confirmation-gated script runner tool.
-    backend = create_sandbox_backend(settings.sandbox, skills_root)
-    graph = create_deep_agent(model=model, backend=backend, checkpointer=checkpointer, **graph_kwargs)
-    return DeepAgentHarnessService(graph, observability)
+    graph = create_deep_agent(model=model, backend=workspace_manager.backend_factory, checkpointer=checkpointer, **graph_kwargs)
+    return DeepAgentHarnessService(graph, observability, workspace_manager)
 
 
 def _excluded_tools(settings: Settings) -> frozenset[str]:
-    """Only the dedicated Skill runner may execute code."""
-    return frozenset({"delete", "write_file", "edit_file", "execute"})
+    """FilesystemBackend has no executable workspace; other backends expose it natively."""
+    if settings.sandbox.provider == "filesystem":
+        return frozenset({"delete", "write_file", "edit_file", "execute"})
+    return frozenset({"delete"})
 
 
 def _confirmation_rules(mcp_manager: McpClientManager, settings: Settings) -> dict[str, dict[str, object]]:
@@ -104,10 +99,10 @@ def _confirmation_rules(mcp_manager: McpClientManager, settings: Settings) -> di
         "allowed_decisions": ["respond"],
         "description": "Provide the requested structured form values.",
     }
-    if settings.sandbox.provider == "gke_agent" and settings.sandbox.execute_requires_confirmation:
-        rules["run_skill_script"] = {
+    if settings.sandbox.provider != "filesystem" and settings.sandbox.execute_requires_confirmation:
+        rules["execute"] = {
             "allowed_decisions": ["approve", "reject"],
-            "description": "Review and approve this Skill script before it runs in the GKE sandbox.",
+            "description": "Review and approve this workspace command before it runs.",
         }
     return rules
 
@@ -143,3 +138,27 @@ def _response_language_system_prompt() -> str:
         "System UI, API/SSE protocol fields, Tool names, JSON keys, enum values, IDs, URLs, code, and product names "
         "must remain English or verbatim."
     )
+
+
+def _workspace_system_prompt(settings: Settings) -> str:
+    if settings.sandbox.provider == "filesystem":
+        return "This runtime provides read-only Skill files and does not provide command execution."
+    return (
+        "All file and command tools share this conversation's persistent workspace. Keep reusable intermediate files "
+        "under /work and final user-facing files under /output. After verifying a final file, call publish_artifact "
+        "with its /output path so the application can present an authenticated download."
+    )
+
+
+def _workspace_permissions(settings: Settings) -> list[FilesystemPermission]:
+    """Keep published Skills immutable through file tools.
+
+    Shell commands are intentionally not governed here; image permissions and the
+    provider isolation boundary remain the enforcement point for ``execute``.
+    """
+    if settings.sandbox.provider == "filesystem":
+        return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
+    return [
+        FilesystemPermission(operations=["write"], paths=["/skill-packages/**"], mode="deny"),
+        FilesystemPermission(operations=["write"], paths=["/workspace/skill-packages/**"], mode="deny"),
+    ]

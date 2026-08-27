@@ -45,22 +45,22 @@ def test_confirmation_description_hides_mcp_implementation_details() -> None:
     assert _confirmation_description("danaan", "search") == "Review and approve this requested action."
 
 
-def test_local_shell_does_not_expose_generic_execute() -> None:
+def test_local_shell_exposes_confirmed_generic_execute() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",
             "mcp_servers": {},
-            "sandbox": {"provider": "local_shell", "allow_agent_shell": True},
+            "sandbox": {"provider": "local_shell"},
         }
     )
 
-    assert "execute" in _excluded_tools(settings)
-    assert "run_skill_script" not in _confirmation_rules(McpClientManager(settings), settings)
+    assert "execute" not in _excluded_tools(settings)
+    assert "execute" in _confirmation_rules(McpClientManager(settings), settings)
 
 
-def test_gke_agent_exposes_only_the_confirmed_script_runner() -> None:
+def test_gke_backend_exposes_confirmed_execute() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "dev",
@@ -68,7 +68,7 @@ def test_gke_agent_exposes_only_the_confirmed_script_runner() -> None:
             "api_auth_token": "x",
             "mcp_servers": {},
             "sandbox": {
-                "provider": "gke_agent",
+                "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",
@@ -78,8 +78,8 @@ def test_gke_agent_exposes_only_the_confirmed_script_runner() -> None:
         }
     )
 
-    assert "execute" in _excluded_tools(settings)
-    assert _confirmation_rules(McpClientManager(settings), settings)["run_skill_script"]["description"].endswith("GKE sandbox.")
+    assert "execute" not in _excluded_tools(settings)
+    assert _confirmation_rules(McpClientManager(settings), settings)["execute"]["description"].endswith("runs.")
 
 
 def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
@@ -90,7 +90,7 @@ def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
             "api_auth_token": "x",
             "mcp_servers": {},
             "sandbox": {
-                "provider": "gke_agent",
+                "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
                     "template_name": "deepagent-runtime",

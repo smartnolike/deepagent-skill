@@ -12,18 +12,18 @@ agent:
     request_timeout_seconds: 3
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
-# Keep the GKE values deployment-specific. The Router Service remains
-# ClusterIP-only; it must not be exposed publicly for this integration.
-# sandbox:
-#   provider: gke_agent
-#   gke:
-#     namespace: danaan-gcp-portal
-#     template_name: danaan-agent-sandbox-template
-#     connection_mode: direct
-#     router_url: http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088
-#     runtime_port: 38087
-#     router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN}
-#     absolute_ttl_seconds: 14400
+sandbox:
+  provider: gke_backend
+  execute_requires_confirmation: ${SANDBOX_EXECUTE_REQUIRES_CONFIRMATION:-true}
+  gke:
+    namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
+    template_name: ${SANDBOX_TEMPLATE_NAME:-danaan-agent-sandbox-template}
+    connection_mode: direct
+    router_url: ${SANDBOX_ROUTER_URL:-http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088}
+    runtime_port: 38087
+    router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN}
+    idle_ttl_seconds: 1800
+    absolute_ttl_seconds: 28800
 database:
   host: 127.0.0.1
   port: 5432

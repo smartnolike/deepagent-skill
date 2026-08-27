@@ -1,12 +1,13 @@
 """Single-root DeepAgent harness invocation and SSE event adaptation."""
-import json
+
 # 将 DeepAgents 内部事件转换为稳定 SSE 事件，避免 API 暴露框架实现细节。
 
-import uuid
+import json
 import logging
+import uuid
 from typing import Any, AsyncIterator
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 from langgraph.types import Command
 
 from common.language import ResponseLanguage
@@ -23,9 +24,11 @@ class DeepAgentHarnessService:
         self,
         graph: Any,
         observability: LangfuseObservability | None = None,
+        workspace_manager: Any | None = None,
     ) -> None:
         self._graph = graph
         self._observability = observability
+        self.workspace_manager = workspace_manager
 
     async def reply(
         self,
@@ -35,7 +38,7 @@ class DeepAgentHarnessService:
         content: str,
         history: list[Message],
         response_language: ResponseLanguage,
-    ) -> AsyncIterator[tuple[str, dict[str, str]]]:
+    ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """Run the root agent under one thread ID and staff-scoped context."""
         config = self._graph_config(conversation_id, staff_id, agent_run_id)
         logger.info("agent_invocation mode=deepagent conversation_id=%s staff_id=%s", conversation_id, staff_id)
@@ -61,7 +64,7 @@ class DeepAgentHarnessService:
         history: list[Message],
         response_language: ResponseLanguage,
         response: dict[str, object] | None = None,
-    ) -> AsyncIterator[tuple[str, dict[str, str]]]:
+    ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """按当前会话 checkpoint 恢复一个已暂停的确认型 Tool 调用。"""
         config = self._graph_config(conversation_id, staff_id, agent_run_id)
         context = {
@@ -90,12 +93,17 @@ class DeepAgentHarnessService:
         return config
 
 
-    async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, str]]]:
+    async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """将普通消息和 LangGraph HITL interrupt 统一转换为 API SSE 事件。"""
         active_tool_names: list[str] = []
         async for mode, value in self._graph.astream(input_value, config=config, context=context, stream_mode=["messages", "updates"]):
             if mode == "messages":
                 message, metadata = value
+                if isinstance(message, ToolMessage) and message.name == "publish_artifact":
+                    artifact = _artifact_payload(message.content)
+                    if artifact is not None:
+                        yield "artifact_created", artifact
+                    continue
                 if not isinstance(message, AIMessage):
                     continue
                 for tool_call in message.tool_calls:
@@ -134,3 +142,20 @@ class DeepAgentHarnessService:
                             "description": str(pending.get("description", "Confirm tool execution")),
                             "arguments": pending.get("args", {}),
                         }
+
+
+def _artifact_payload(content: object) -> dict[str, object] | None:
+    """Extract the stable artifact fields from a publish_artifact Tool result."""
+    value = content
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(value, dict) or not isinstance(value.get("artifact_id"), str):
+        return None
+    return {
+        "artifact_id": value["artifact_id"],
+        "filename": str(value.get("filename", "download")),
+        "size_bytes": int(value.get("size_bytes", 0)),
+    }
