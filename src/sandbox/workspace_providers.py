@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import shutil
+import stat
 import sys
 import uuid
 from dataclasses import dataclass
@@ -63,6 +64,7 @@ class LocalShellWorkspaceProvider:
         if not root.exists():
             root.mkdir(parents=True, exist_ok=False)
             shutil.copytree(self._skills_root, root / "skill-packages")
+            self._make_read_only(root / "skill-packages")
             (root / "work").mkdir()
             (root / "output").mkdir()
         return WorkspaceAllocation(str(root), None, None)
@@ -94,10 +96,23 @@ class LocalShellWorkspaceProvider:
         workspace_root = self._settings.workspace_root.resolve()
         target = Path(reference.workspace_reference).resolve()
         if target != workspace_root and target.is_relative_to(workspace_root):
+            self._make_writable(target / "skill-packages")
             shutil.rmtree(target, ignore_errors=True)
 
     def reusable(self, reference: WorkspaceReference) -> bool:
         return Path(reference.workspace_reference).is_dir()
+
+    @staticmethod
+    def _make_read_only(directory: Path) -> None:
+        for path in [directory, *directory.rglob("*")]:
+            path.chmod(path.stat().st_mode & ~(stat.S_IWUSR | stat.S_IWGRP | stat.S_IWOTH))
+
+    @staticmethod
+    def _make_writable(directory: Path) -> None:
+        if not directory.exists():
+            return
+        for path in [directory, *directory.rglob("*")]:
+            path.chmod(path.stat().st_mode | stat.S_IWUSR)
 
 
 class GkeWorkspaceProvider:

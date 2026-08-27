@@ -20,6 +20,10 @@ SQL、Kubernetes SDK 或文件系统操作。`WorkspaceSessionStore` 负责 Post
 `workspace_providers.py` 负责 filesystem / local shell / GKE 的资源差异，`GkeSandboxClient` 隔离固定
 `v1alpha1` SDK 的连接细节，`WorkspaceArtifactService` 负责 `/output` 路径规范化和访问限制。
 
+DeepAgents 0.7 不再接受 backend factory。因此 local shell / GKE 使用一个已初始化的
+`ConversationSandboxBackend` 代理；每次文件或 `execute` 操作才从当前 LangGraph `thread_id` 解析实际会话
+Workspace。filesystem 则直接使用已初始化的 `FilesystemBackend`。
+
 ## 目录契约
 
 - `/workspace/skill-packages`：只读 Skill 发布内容；兼容别名 `/skill-packages`。

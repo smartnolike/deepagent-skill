@@ -74,7 +74,12 @@ def create_agent_service(
         "name": "deepagent-platform",
     }
     model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
-    graph = create_deep_agent(model=model, backend=workspace_manager.backend_factory, checkpointer=checkpointer, **graph_kwargs)
+    graph = create_deep_agent(
+        model=model,
+        backend=workspace_manager.deepagents_backend,
+        checkpointer=checkpointer,
+        **graph_kwargs,
+    )
     return DeepAgentHarnessService(graph, observability, workspace_manager)
 
 
@@ -153,12 +158,10 @@ def _workspace_system_prompt(settings: Settings) -> str:
 def _workspace_permissions(settings: Settings) -> list[FilesystemPermission]:
     """Keep published Skills immutable through file tools.
 
-    Shell commands are intentionally not governed here; image permissions and the
-    provider isolation boundary remain the enforcement point for ``execute``.
+    DeepAgents 0.7 does not combine filesystem permissions with a sandbox
+    backend. GKE enforces immutability in the runtime image; local shell is a
+    development-only backend and copies Skill files read-only on creation.
     """
     if settings.sandbox.provider == "filesystem":
         return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]
-    return [
-        FilesystemPermission(operations=["write"], paths=["/skill-packages/**"], mode="deny"),
-        FilesystemPermission(operations=["write"], paths=["/workspace/skill-packages/**"], mode="deny"),
-    ]
+    return []

@@ -33,6 +33,23 @@ def test_factory_requires_a_configured_model() -> None:
         create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
 
 
+def test_factory_accepts_initialized_conversation_backend() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "local",
+            "agent": {"provider": "openai", "model": "gpt-4.1-mini", "api_key": "test"},
+            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "sandbox": {"provider": "local_shell"},
+        }
+    )
+
+    service = create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
+
+    assert service.workspace_manager is not None
+
+
 def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
     assert _harness_profile_key("gpt-5.6-luna") == "openai:gpt-5.6-luna"
     assert _harness_profile_key("openai:gpt-5.6-luna") == "openai:gpt-5.6-luna"

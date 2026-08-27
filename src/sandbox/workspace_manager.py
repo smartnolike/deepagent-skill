@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import uuid
 from pathlib import Path
-from typing import Any
 
 from langchain_core.runnables.config import ensure_config
 
 from config.sandbox_settings import SandboxSettings
 from sandbox.artifact_service import WorkspaceArtifactService
+from sandbox.conversation_sandbox_backend import ConversationSandboxBackend
 from sandbox.session_store import WorkspaceReference, WorkspaceSessionStore
 from sandbox.workspace_providers import (
     FilesystemWorkspaceProvider,
@@ -33,6 +33,11 @@ class WorkspaceManager:
         }
         if settings.gke is not None:
             self._providers["gke_backend"] = GkeWorkspaceProvider(settings.gke)
+        self._deepagents_backend = (
+            self._selected_provider.backend()
+            if settings.provider == "filesystem"
+            else ConversationSandboxBackend(self)
+        )
 
     @property
     def skills_path(self) -> str:
@@ -42,9 +47,15 @@ class WorkspaceManager:
     def supports_artifacts(self) -> bool:
         return self._selected_provider.supports_artifacts
 
-    def backend_factory(self, _: Any = None):
+    @property
+    def deepagents_backend(self):
+        """Return the initialized BackendProtocol required by DeepAgents 0.7+."""
+        return self._deepagents_backend
+
+    def sandbox_backend_for_current_thread(self):
+        """Resolve the execution backend lazily from the active LangGraph thread."""
         if self._settings.provider == "filesystem":
-            return self._selected_provider.backend()
+            raise RuntimeError("FilesystemBackend does not support sandbox execution")
         return self._selected_provider.backend(self._ensure_workspace(self._thread_id()))
 
     def download_artifact(self, reference: WorkspaceReference, path: str) -> bytes:
