@@ -139,7 +139,7 @@ class GkeWorkspaceProvider:
         return GkeSandboxBackend(sandbox, self._settings.command_timeout_seconds)
 
     def read_output(self, reference: WorkspaceReference, path: str) -> bytes:
-        return self._client.get(reference.workspace_reference, reference.namespace).files.read(path)
+        return self.backend(reference).read_file(path)
 
     def release(self, reference: WorkspaceReference) -> None:
         self._client.terminate(reference.workspace_reference, reference.namespace)

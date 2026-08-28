@@ -8,6 +8,8 @@ from typing import Any
 from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse
 from deepagents.backends.sandbox import BaseSandbox
 
+from sandbox.gke_runtime_paths import GkeRuntimePathError, to_runtime_relative_path
+
 
 class GkeSandboxBackend(BaseSandbox):
     """Expose one already-created ``k8s_agent_sandbox.Sandbox`` to DeepAgents."""
@@ -31,11 +33,19 @@ class GkeSandboxBackend(BaseSandbox):
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         responses: list[FileUploadResponse] = []
         for path, content in files:
-            if not path.startswith("/"):
+            try:
+                runtime_path = to_runtime_relative_path(path)
+            except GkeRuntimePathError:
                 responses.append(FileUploadResponse(path=path, error="invalid_path"))
                 continue
             try:
-                self._sandbox.files.write(path, content)
+                # k8s-agent-sandbox 0.4.6's Filesystem.write() reduces the
+                # path to its basename.  The official Runtime accepts a
+                # relative destination as multipart filename, so use its
+                # authenticated connector without losing work/output folders.
+                self._sandbox.connector.send_request(
+                    "POST", "upload", files={"file": (runtime_path, content)}, timeout=60
+                )
                 responses.append(FileUploadResponse(path=path))
             except Exception as exc:  # SDK exposes provider-specific HTTP errors.
                 responses.append(FileUploadResponse(path=path, error=type(exc).__name__))
@@ -44,11 +54,17 @@ class GkeSandboxBackend(BaseSandbox):
     def download_files(self, paths: list[str]) -> list[FileDownloadResponse]:
         responses: list[FileDownloadResponse] = []
         for path in paths:
-            if not path.startswith("/"):
+            try:
+                runtime_path = to_runtime_relative_path(path)
+            except GkeRuntimePathError:
                 responses.append(FileDownloadResponse(path=path, error="invalid_path"))
                 continue
             try:
-                responses.append(FileDownloadResponse(path=path, content=self._sandbox.files.read(path)))
+                responses.append(FileDownloadResponse(path=path, content=self._sandbox.files.read(runtime_path)))
             except Exception as exc:  # SDK exposes provider-specific HTTP errors.
                 responses.append(FileDownloadResponse(path=path, error=type(exc).__name__))
         return responses
+
+    def read_file(self, path: str) -> bytes:
+        """Read a canonical workspace path for artifact publication."""
+        return self._sandbox.files.read(to_runtime_relative_path(path))

@@ -16,6 +16,17 @@ class FakeFiles:
         return self.values[path]
 
 
+class FakeConnector:
+    def __init__(self, files: FakeFiles) -> None:
+        self.files = files
+        self.calls: list[tuple[str, str, dict, int]] = []
+
+    def send_request(self, method: str, endpoint: str, *, files: dict, timeout: int) -> None:
+        self.calls.append((method, endpoint, files, timeout))
+        filename, content = files["file"]
+        self.files.values[filename] = content
+
+
 class FakeCommands:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
@@ -26,7 +37,10 @@ class FakeCommands:
 
 
 def backend() -> tuple[GkeSandboxBackend, SimpleNamespace]:
-    sandbox = SimpleNamespace(claim_name="claim-1", files=FakeFiles(), commands=FakeCommands())
+    files = FakeFiles()
+    sandbox = SimpleNamespace(
+        claim_name="claim-1", files=files, commands=FakeCommands(), connector=FakeConnector(files)
+    )
     return GkeSandboxBackend(sandbox, default_timeout=120), sandbox
 
 
@@ -52,12 +66,24 @@ async def test_async_execute_accepts_override_timeout() -> None:
 
 
 def test_upload_and_download_files_are_provider_neutral() -> None:
-    adapter, _ = backend()
+    adapter, sandbox = backend()
 
     uploaded = adapter.upload_files([("/workspace/work/input.csv", b"a,b\n1,2")])
     downloaded = adapter.download_files(["/workspace/work/input.csv"])
 
     assert uploaded[0].error is None
     assert downloaded[0].content == b"a,b\n1,2"
+    assert sandbox.connector.calls == [
+        ("POST", "upload", {"file": ("work/input.csv", b"a,b\n1,2")}, 60)
+    ]
     assert adapter.upload_files([("relative.txt", b"x")])[0].error == "invalid_path"
     assert adapter.download_files(["relative.txt"])[0].error == "invalid_path"
+
+
+def test_file_aliases_are_translated_to_the_runtime_workspace_root() -> None:
+    adapter, sandbox = backend()
+    sandbox.files.values["skill-packages/example/SKILL.md"] = b"instructions"
+    sandbox.files.values["output/report.xlsx"] = b"xlsx"
+
+    assert adapter.download_files(["/skill-packages/example/SKILL.md"])[0].content == b"instructions"
+    assert adapter.read_file("/workspace/output/report.xlsx") == b"xlsx"
