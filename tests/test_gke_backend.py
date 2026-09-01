@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+import shlex
 import uuid
 
 import pytest
@@ -62,8 +63,11 @@ def test_execute_maps_logical_paths_and_uses_default_timeout(configured: str) ->
 
     root = f"/workspace/staff-workspaces/staff_123/{configured}"
     assert adapter.id == "deepagent-assistant"
-    assert sandbox.commands.calls == [
-        (f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && python {root}/work/script.py", 120)
+    assert sandbox.commands.calls[0][1] == 120
+    assert shlex.split(sandbox.commands.calls[0][0]) == [
+        "sh",
+        "-c",
+        f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && python {root}/work/script.py",
     ]
     assert result.output == "created\nwarning\n"
 
@@ -81,13 +85,14 @@ def test_execute_maps_absolute_logical_paths_once(configured: str, logical_path:
     adapter.execute(f"python {logical_path}")
 
     root = f"/workspace/staff-workspaces/staff_123/{configured}"
-    expected = (
+    expected_shell_command = (
         f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && "
         f"python {root}{expected_suffix}"
         if "skill-packages" not in logical_path
         else f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && python /workspace/skill-packages/example/run.py"
     )
-    assert sandbox.commands.calls == [(expected, 120)]
+    assert sandbox.commands.calls[0][1] == 120
+    assert shlex.split(sandbox.commands.calls[0][0]) == ["sh", "-c", expected_shell_command]
 
 
 @pytest.mark.asyncio

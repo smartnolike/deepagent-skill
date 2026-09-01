@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import re
+import shlex
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -39,8 +40,14 @@ class GkeSandboxBackend(BaseSandbox):
             f"mkdir -p {paths.workspace}/work {paths.workspace}/output && "
             f"cd {paths.workspace}/work && export DEEPAGENT_WORKSPACE={paths.workspace}"
         )
+        # The official Python Runtime uses ``shlex.split`` and invokes the
+        # resulting argv directly.  It does not interpret ``&&`` or ``cd``
+        # unless we explicitly start a shell.  ``mapped`` is the original
+        # Agent command (aside from workspace path aliases); this wrapper does
+        # not generate or alter its script content.
+        shell_command = f"{prefix} && {mapped}"
         result = self._sandbox_for_use().commands.run(
-            f"{prefix} && {mapped}", timeout=timeout or self._settings.command_timeout_seconds
+            f"sh -c {shlex.quote(shell_command)}", timeout=timeout or self._settings.command_timeout_seconds
         )
         output = "".join(part for part in (getattr(result, "stdout", ""), getattr(result, "stderr", "")) if part)
         return ExecuteResponse(output=output or "<no output>", exit_code=result.exit_code, truncated=False)
