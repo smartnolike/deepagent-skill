@@ -17,7 +17,7 @@ sandbox:
   execute_requires_confirmation: ${SANDBOX_EXECUTE_REQUIRES_CONFIRMATION:-true}
   gke:
     namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
-    sandbox_name: ${SANDBOX_NAME:-deepagent-sandbox-prod}
+    sandbox_claim_name: ${SANDBOX_CLAIM_NAME:-deepagent-assistant-prod}
     connection_mode: direct
     router_url: ${SANDBOX_ROUTER_URL:-http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088}
     runtime_port: 38087

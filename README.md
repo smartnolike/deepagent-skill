@@ -50,7 +50,7 @@ DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `
 ## 会话工作区与 Sandbox Backend
 
 `sandbox.provider` 支持两种模式：`filesystem` 仅只读加载 Skill，适合最快的本地指令测试；`gke_backend`
-连接 dev/prod 中预先部署的一个固定 GKE Agent Sandbox，不会为请求创建 Claim。GKE 客户端固定为
+连接 dev/prod 中预先部署的一个固定 GKE Agent SandboxClaim，不会为请求创建或删除 Claim。GKE 客户端固定为
 `k8s-agent-sandbox==0.4.6`，以匹配当前托管控制器的 `v1alpha1` API。
 
 Skill 源码目录不改名，仍为 `skill-packages/`。Sandbox runtime 镜像将它复制到只读的

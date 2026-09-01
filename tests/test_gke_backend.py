@@ -38,7 +38,7 @@ class FakeCommands:
 def backend() -> tuple[GkeSandboxBackend, SimpleNamespace, str]:
     files = FakeFiles()
     sandbox = SimpleNamespace(files=files, commands=FakeCommands(), connector=FakeConnector(files))
-    settings = GkeAgentSandboxSettings(namespace="test", sandbox_name="deepagent-sandbox", router_url="http://router")
+    settings = GkeAgentSandboxSettings(namespace="test", sandbox_claim_name="deepagent-assistant", router_url="http://router")
     return GkeSandboxBackend(settings, sandbox), sandbox, str(uuid.uuid4())
 
 
@@ -57,7 +57,7 @@ def test_execute_maps_logical_paths_and_uses_default_timeout(configured: str) ->
     result = adapter.execute("python /work/script.py")
 
     root = f"/workspace/staff-workspaces/staff_123/{configured}"
-    assert adapter.id == "deepagent-sandbox"
+    assert adapter.id == "deepagent-assistant"
     assert sandbox.commands.calls == [
         (f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && python {root}/work/script.py", 120)
     ]

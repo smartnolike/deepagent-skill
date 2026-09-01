@@ -2,15 +2,16 @@
 
 ## 目标
 
-生产环境使用一个由基础设施预先部署的 GKE Agent Sandbox。应用只连接这个固定 Sandbox，绝不在请求处理过程中创建或删除 `SandboxClaim`。
+生产环境使用一个由基础设施预先部署的、assistant-scoped GKE `SandboxClaim`。应用只连接这个固定 Claim，绝不在请求处理过程中创建或删除 Claim。
 
 这实现 DeepAgents 的 assistant-scoped 语义：同一 Agent 的所有 conversation 共享一个运行环境；会话文件仍在环境内部按 staff 和 conversation 分隔。
 
 ```text
 DeepAgent API
   └─ Sandbox Router
-       └─ Sandbox/deepagent-sandbox-{env} (replicas: 1)
-            └─ /workspace
+       └─ SandboxClaim/deepagent-assistant-{env}
+            └─ Sandbox Pod
+                 └─ /workspace
                  ├─ skill-packages/                 # 镜像内置，只读
                  └─ staff-workspaces/
                       └─ {staff_id}/{conversation_id}/
@@ -23,7 +24,7 @@ DeepAgent API
 | provider | 用途 | 文件位置 |
 | --- | --- | --- |
 | `filesystem` | 本地只读验证 Skill | 本地 `skill-packages/`；无执行和 artifact |
-| `gke_backend` | dev / prod | 一个固定 GKE Sandbox 的 `/workspace/staff-workspaces/<staff_id>/<conversation_id>` |
+| `gke_backend` | dev / prod | 固定 Claim 所绑定 Sandbox 的 `/workspace/staff-workspaces/<staff_id>/<conversation_id>` |
 
 ## 路径契约
 
@@ -50,7 +51,7 @@ Agent 继续使用逻辑路径：
 
 `GkeSandboxBackend` 是唯一的 GKE Backend：
 
-- 连接配置中固定的 `sandbox_name`；
+- 通过 Router 连接配置中固定的 `sandbox_claim_name`；
 - 解析当前 `staff_id` / `conversation_id`；
 - 创建当前目录的 `work/` 和 `output/`；
 - 映射文件、artifact 与执行 cwd；
@@ -63,11 +64,11 @@ Agent 继续使用逻辑路径：
 
 ## 生命周期
 
-- 基础设施通过 GitOps / Kubernetes 部署固定 `kind: Sandbox`，名称例如 `deepagent-sandbox-prod`，`replicas: 1`。
-- 应用启动与请求处理只检查、连接该 Sandbox；不会调用 `create_sandbox()` 或 `terminate()`。
+- 基础设施通过 GitOps / Kubernetes 部署固定 `SandboxTemplate` 与 `SandboxClaim`，名称例如 `deepagent-assistant-prod`；v1alpha1 Claim 设置 `warmpool: none`，不部署 WarmPool。
+- 应用启动与请求处理只检查、通过 Router 连接该 Claim；不会调用 `create_sandbox()` 或 `terminate()`。
 - 每个 conversation workspace 的最后活动时间保存到数据库。定时任务每小时清理超过 `workspace_retention_seconds`（默认 172800，即两天）的目录；artifact 记录按同一过期时间在读取时拒绝访问，并随 conversation 删除级联删除。
 - 不挂 PVC 时，Sandbox Pod 被删除并重建会清空全部 runtime workspace；这是本方案的预期行为。若未来需要跨 Pod 重启保留文件，再挂载 PVC。
-- conversation 删除只删除自己的 workspace 目录，绝不影响固定 Sandbox。
+- conversation 删除只删除自己的 workspace 目录，绝不影响固定 Claim 所绑定的 Sandbox。
 
 ## execute 与安全边界
 
@@ -81,6 +82,6 @@ Agent 将最终文件写入 `/output` 后调用 `publish_artifact`。记录保�
 
 ## 扩展边界
 
-一个 assistant 对应一个有状态 Sandbox replica。不能简单增加同一个 Sandbox 的副本：不同副本的本地文件系统不同，后续脚本可能读不到前一步产物。增加 GKE 节点没有影响；Router 继续路由到固定 Sandbox 的当前 Pod。
+一个 assistant 对应一个有状态、由固定 Claim 绑定的 Sandbox。不能简单增加副本：不同副本的本地文件系统不同，后续脚本可能读不到前一步产物。增加 GKE 节点没有影响；Router 继续路由到该 Claim 的当前 Pod。
 
 多 Sandbox 扩展需要未来单独设计分片映射或共享存储，本方案不包含该能力。

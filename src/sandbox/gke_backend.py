@@ -27,7 +27,7 @@ class GkeSandboxBackend(BaseSandbox):
 
     @property
     def id(self) -> str:
-        return self._settings.sandbox_name
+        return self._settings.sandbox_claim_name
 
     def execute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         paths = self._current_paths()

@@ -8,13 +8,13 @@ from config.sandbox_settings import GkeAgentSandboxSettings
 
 
 class GkeSandboxClient:
-    """Connect to the one Sandbox CR already deployed in the namespace."""
+    """Connect through the Router to one pre-deployed SandboxClaim."""
 
     def __init__(self, settings: GkeAgentSandboxSettings) -> None:
         self._settings = settings
 
     def get(self) -> Any:
-        sandbox = self._client().get_sandbox(self._settings.sandbox_name, self._settings.namespace)
+        sandbox = self._client().get_sandbox(self._settings.sandbox_claim_name, self._settings.namespace)
         token = self._settings.router_auth_token.get_secret_value() if self._settings.router_auth_token else ""
         if token:
             sandbox.connector.session.headers["Authorization"] = f"Bearer {token}"

@@ -8,10 +8,10 @@ from pydantic import BaseModel, Field, SecretStr, field_validator, model_validat
 
 
 class GkeAgentSandboxSettings(BaseModel):
-    """One pre-deployed, shared GKE Agent Sandbox."""
+    """One pre-deployed, assistant-scoped GKE SandboxClaim."""
 
     namespace: str
-    sandbox_name: str
+    sandbox_claim_name: str
     connection_mode: Literal["tunnel", "direct"] = "direct"
     router_url: str | None = None
     router_auth_token: SecretStr | None = None

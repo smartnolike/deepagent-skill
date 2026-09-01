@@ -51,8 +51,8 @@ def test_gke_backend_requires_connection_settings() -> None:
         )
 
 
-def test_gke_backend_requires_a_fixed_sandbox_name() -> None:
-    with pytest.raises(ValidationError, match="sandbox_name"):
+def test_gke_backend_requires_a_fixed_sandbox_claim_name() -> None:
+    with pytest.raises(ValidationError, match="sandbox_claim_name"):
         Settings.model_validate(
             {
                 "agent_env": "dev",
@@ -81,7 +81,7 @@ def test_gke_tunnel_does_not_require_a_router_url() -> None:
                 "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
-                    "sandbox_name": "deepagent-sandbox-local",
+                    "sandbox_claim_name": "deepagent-assistant-local",
                     "connection_mode": "tunnel",
                 },
             },
@@ -102,7 +102,7 @@ def test_gke_workspace_root_must_be_inside_runtime_workspace() -> None:
                 "mcp_servers": {},
                 "sandbox": {
                     "provider": "gke_backend",
-                    "gke": {"namespace": "test", "sandbox_name": "test", "connection_mode": "tunnel", "workspace_root": "/tmp/workspaces"},
+                    "gke": {"namespace": "test", "sandbox_claim_name": "test", "connection_mode": "tunnel", "workspace_root": "/tmp/workspaces"},
                 },
             }
         )

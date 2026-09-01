@@ -43,7 +43,7 @@ def test_factory_accepts_fixed_gke_backend() -> None:
             "mcp_servers": {},
             "sandbox": {
                 "provider": "gke_backend",
-                "gke": {"namespace": "agent-sandbox", "sandbox_name": "deepagent-sandbox", "router_url": "http://router"},
+                "gke": {"namespace": "agent-sandbox", "sandbox_claim_name": "deepagent-assistant", "router_url": "http://router"},
             },
         }
     )
@@ -91,7 +91,7 @@ def test_gke_backend_exposes_confirmed_execute() -> None:
                 "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
-                    "sandbox_name": "deepagent-sandbox-dev",
+                    "sandbox_claim_name": "deepagent-assistant-dev",
                     "router_url": "http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080",
                 },
             },
@@ -113,7 +113,7 @@ def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
                 "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
-                    "sandbox_name": "deepagent-sandbox-local",
+                    "sandbox_claim_name": "deepagent-assistant-local",
                     "connection_mode": "tunnel",
                 },
             },
