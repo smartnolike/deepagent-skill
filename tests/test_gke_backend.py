@@ -10,9 +10,13 @@ from sandbox.gke_backend import GkeSandboxBackend
 class FakeFiles:
     def __init__(self) -> None:
         self.values: dict[str, bytes] = {}
+        self.entries: dict[str, list[SimpleNamespace]] = {}
 
     def read(self, path: str) -> bytes:
         return self.values[path]
+
+    def list(self, path: str) -> list[SimpleNamespace]:
+        return self.entries[path]
 
 
 class FakeConnector:
@@ -93,6 +97,37 @@ async def test_async_execute_accepts_override_timeout(configured: str) -> None:
 
     assert result.exit_code == 0
     assert sandbox.commands.calls[0][1] == 5
+
+
+def test_ls_uses_runtime_file_api_for_skills(configured: str) -> None:
+    adapter, sandbox, _ = backend()
+    sandbox.files.entries["skill-packages"] = [
+        SimpleNamespace(name="cost-estimation", type="directory", size=0, mod_time=1.0),
+        SimpleNamespace(name="README.md", type="file", size=12, mod_time=2.0),
+        SimpleNamespace(name="cost-consultant", type="directory", size=0, mod_time=3.0),
+    ]
+
+    result = adapter.ls("/workspace/skill-packages")
+
+    assert result.error is None
+    assert result.entries == [
+        {"path": "/workspace/skill-packages/README.md", "is_dir": False, "size": 12, "modified_at": "1970-01-01T00:00:02+00:00"},
+        {"path": "/workspace/skill-packages/cost-consultant/", "is_dir": True, "size": 0, "modified_at": "1970-01-01T00:00:03+00:00"},
+        {"path": "/workspace/skill-packages/cost-estimation/", "is_dir": True, "size": 0, "modified_at": "1970-01-01T00:00:01+00:00"},
+    ]
+    assert sandbox.commands.calls == []
+
+
+@pytest.mark.asyncio
+async def test_als_delegates_to_runtime_file_api(configured: str) -> None:
+    adapter, sandbox, _ = backend()
+    sandbox.files.entries["skill-packages"] = [SimpleNamespace(name="cost-consultant", type="directory", size=0, mod_time=1.0)]
+
+    result = await adapter.als("/workspace/skill-packages")
+
+    assert result.entries == [
+        {"path": "/workspace/skill-packages/cost-consultant/", "is_dir": True, "size": 0, "modified_at": "1970-01-01T00:00:01+00:00"}
+    ]
 
 
 def test_upload_download_and_artifact_reads_are_conversation_scoped(configured: str) -> None:

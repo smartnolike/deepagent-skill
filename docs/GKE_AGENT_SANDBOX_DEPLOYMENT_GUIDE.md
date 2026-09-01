@@ -59,7 +59,6 @@ metadata:
 spec:
   sandboxTemplateRef:
     name: deepagent-runtime-template
-  warmpool: none
 ```
 
 镜像在构建期复制 `skill-packages` 到 `/workspace/skill-packages`，并创建可写的 `/workspace/staff-workspaces`。不要挂载主服务源码、Docker socket、hostPath、Kubernetes token 或云管理员凭据。

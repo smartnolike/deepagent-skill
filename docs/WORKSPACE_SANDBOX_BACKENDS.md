@@ -64,7 +64,7 @@ Agent 继续使用逻辑路径：
 
 ## 生命周期
 
-- 基础设施通过 GitOps / Kubernetes 部署固定 `SandboxTemplate` 与 `SandboxClaim`，名称例如 `deepagent-assistant-prod`；v1alpha1 Claim 设置 `warmpool: none`，不部署 WarmPool。
+- 基础设施通过 GitOps / Kubernetes 部署固定 `SandboxTemplate` 与 `SandboxClaim`，名称例如 `deepagent-assistant-prod`；当前集群的 v1alpha1 Claim 不配置 WarmPool。
 - 应用启动与请求处理只检查、通过 Router 连接该 Claim；不会调用 `create_sandbox()` 或 `terminate()`。
 - 每个 conversation workspace 的最后活动时间保存到数据库。定时任务每小时清理超过 `workspace_retention_seconds`（默认 172800，即两天）的目录；artifact 记录按同一过期时间在读取时拒绝访问，并随 conversation 删除级联删除。
 - 不挂 PVC 时，Sandbox Pod 被删除并重建会清空全部 runtime workspace；这是本方案的预期行为。若未来需要跨 Pod 重启保留文件，再挂载 PVC。

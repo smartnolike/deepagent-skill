@@ -5,9 +5,10 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from datetime import UTC, datetime
 from typing import Any
 
-from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse
+from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse, LsResult
 from deepagents.backends.sandbox import BaseSandbox
 from langchain_core.runnables.config import ensure_config
 
@@ -44,6 +45,44 @@ class GkeSandboxBackend(BaseSandbox):
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         return await asyncio.to_thread(self.execute, command, timeout=timeout)
+
+    def ls(self, path: str) -> LsResult:
+        """List files through the Runtime file API instead of shelling out.
+
+        ``BaseSandbox.ls`` runs a generated ``python3 -c`` command and silently
+        discards its stderr.  That makes a Runtime command transport failure
+        indistinguishable from an empty Skill directory.  The GKE SDK already
+        exposes the Runtime's structured list endpoint, so use it directly.
+        """
+        try:
+            physical_path = self._current_paths().physical_path(path)
+            runtime_path = to_runtime_relative_path(physical_path)
+            entries = self._sandbox_for_use().files.list(runtime_path)
+        except (GkeRuntimePathError, ValueError) as exc:
+            return LsResult(error=f"Path '{path}': invalid_path ({exc})", entries=None)
+        except Exception as exc:
+            return LsResult(error=f"Cannot list '{path}': {type(exc).__name__}: {exc}", entries=None)
+
+        logical_root = path.rstrip("/") or "/"
+        results = []
+        for entry in entries:
+            is_dir = getattr(entry, "type", None) == "directory"
+            entry_path = f"{logical_root}/{entry.name}"
+            if is_dir:
+                entry_path += "/"
+            results.append(
+                {
+                    "path": entry_path,
+                    "is_dir": is_dir,
+                    "size": getattr(entry, "size", 0),
+                    "modified_at": datetime.fromtimestamp(getattr(entry, "mod_time", 0), tz=UTC).isoformat(),
+                }
+            )
+        results.sort(key=lambda item: item["path"])
+        return LsResult(entries=results)
+
+    async def als(self, path: str) -> LsResult:
+        return await asyncio.to_thread(self.ls, path)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         responses: list[FileUploadResponse] = []
