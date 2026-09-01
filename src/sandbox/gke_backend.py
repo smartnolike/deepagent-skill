@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from deepagents.backends.protocol import ExecuteResponse, FileDownloadResponse, FileUploadResponse, LsResult
+from deepagents.backends.protocol import ExecuteResponse, FileData, FileDownloadResponse, FileUploadResponse, LsResult, ReadResult
 from deepagents.backends.sandbox import BaseSandbox
+from deepagents.backends.utils import _get_backend_read_file_type, check_empty_content, slice_read_response
 from langchain_core.runnables.config import ensure_config
 
 from config.sandbox_settings import GkeAgentSandboxSettings
@@ -83,6 +85,33 @@ class GkeSandboxBackend(BaseSandbox):
 
     async def als(self, path: str) -> LsResult:
         return await asyncio.to_thread(self.ls, path)
+
+    def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        """Read through the Runtime file API instead of BaseSandbox's shell command."""
+        if limit <= 0:
+            return ReadResult(file_data=FileData(content="", encoding="utf-8"), no_lines_requested=True)
+        try:
+            physical_path = self._current_paths().physical_path(file_path)
+            raw = self._sandbox_for_use().files.read(to_runtime_relative_path(physical_path))
+        except (GkeRuntimePathError, ValueError) as exc:
+            return ReadResult(error=f"File '{file_path}': invalid_path ({exc})")
+        except Exception as exc:
+            return ReadResult(error=f"File '{file_path}': {type(exc).__name__}: {exc}")
+
+        if _get_backend_read_file_type(file_path) != "text":
+            return ReadResult(file_data=FileData(content=base64.standard_b64encode(raw).decode("ascii"), encoding="base64"))
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            return ReadResult(file_data=FileData(content=base64.standard_b64encode(raw).decode("ascii"), encoding="base64"))
+
+        empty_message = check_empty_content(content)
+        if empty_message:
+            return ReadResult(file_data=FileData(content=empty_message, encoding="utf-8"))
+        return slice_read_response(FileData(content=content, encoding="utf-8"), offset, limit)
+
+    async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
+        return await asyncio.to_thread(self.read, file_path, offset, limit)
 
     def upload_files(self, files: list[tuple[str, bytes]]) -> list[FileUploadResponse]:
         responses: list[FileUploadResponse] = []

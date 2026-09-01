@@ -130,6 +130,33 @@ async def test_als_delegates_to_runtime_file_api(configured: str) -> None:
     ]
 
 
+def test_read_uses_runtime_file_api_for_skill_content(configured: str) -> None:
+    adapter, sandbox, _ = backend()
+    sandbox.files.values["skill-packages/cost-estimation/SKILL.md"] = b"first line\nsecond line\nthird line\n"
+
+    result = adapter.read("/workspace/skill-packages/cost-estimation/SKILL.md", offset=1, limit=1)
+
+    assert result.error is None
+    assert result.file_data is not None
+    assert result.file_data["content"] == "second line\n"
+    assert result.start_line == 2
+    assert result.end_line == 2
+    assert result.total_lines == 3
+    assert result.next_offset == 2
+    assert sandbox.commands.calls == []
+
+
+@pytest.mark.asyncio
+async def test_aread_delegates_to_runtime_file_api(configured: str) -> None:
+    adapter, sandbox, _ = backend()
+    sandbox.files.values["skill-packages/cost-consultant/SKILL.md"] = b"content\n"
+
+    result = await adapter.aread("/workspace/skill-packages/cost-consultant/SKILL.md")
+
+    assert result.file_data is not None
+    assert result.file_data["content"] == "content\n"
+
+
 def test_upload_download_and_artifact_reads_are_conversation_scoped(configured: str) -> None:
     adapter, sandbox, _ = backend()
     root = f"staff-workspaces/staff_123/{configured}"
