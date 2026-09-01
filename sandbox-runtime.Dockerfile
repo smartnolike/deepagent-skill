@@ -80,16 +80,15 @@ RUN --mount=type=secret,id=PIP_CONFIG,target=/etc/pip.conf,required=false \
     done \
     && rm -rf /root/.cache/pip
 
-# Skill packages are immutable to the runtime user. /work holds reusable
-# intermediate files; /output is the only directory publish_artifact exposes.
-RUN mkdir -p /workspace/work /workspace/output \
+# Skill packages are immutable. Conversation files are created lazily below
+# /workspace/staff-workspaces/{staff_id}/{conversation_id}; there are no global
+# /work or /output aliases because this one Sandbox is shared concurrently.
+RUN mkdir -p /workspace/staff-workspaces \
     && ln -s /workspace/skill-packages /skill-packages \
-    && ln -s /workspace/work /work \
-    && ln -s /workspace/output /output \
     && chown -R root:root /workspace/skill-packages /opt/skill-venv \
     && chmod -R a+rX /workspace/skill-packages /opt/skill-venv \
     && chmod -R a-w /workspace/skill-packages /opt/skill-venv \
-    && chown -R ${SANDBOX_UID}:${SANDBOX_UID} /workspace/work /workspace/output
+    && chown -R ${SANDBOX_UID}:${SANDBOX_UID} /workspace/staff-workspaces
 
 ENV SANDBOX_BASE_DIR=/workspace \
     DEEPAGENT_WORKSPACE=/workspace \

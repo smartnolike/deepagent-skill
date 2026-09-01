@@ -24,11 +24,11 @@ class DeepAgentHarnessService:
         self,
         graph: Any,
         observability: LangfuseObservability | None = None,
-        workspace_manager: Any | None = None,
+        gke_workspace_service: Any | None = None,
     ) -> None:
         self._graph = graph
         self._observability = observability
-        self.workspace_manager = workspace_manager
+        self.gke_workspace_service = gke_workspace_service
 
     async def reply(
         self,
@@ -81,7 +81,9 @@ class DeepAgentHarnessService:
 
     def _graph_config(self, conversation_id: uuid.UUID, staff_id: str, agent_run_id: uuid.UUID) -> dict[str, object]:
         """Build one LangGraph config with optional per-run Langfuse callback metadata."""
-        config: dict[str, object] = {"configurable": {"thread_id": str(conversation_id)}}
+        # GKE's shared Sandbox maps this server-validated staff ID and thread
+        # ID to /workspace/staff-workspaces/{staff_id}/{conversation_id}.
+        config: dict[str, object] = {"configurable": {"thread_id": str(conversation_id), "staff_id": staff_id}}
         if self._observability is not None:
             config["callbacks"] = [self._observability.create_callback()]
             config["metadata"] = {

@@ -21,22 +21,18 @@ agent:
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
 sandbox:
-  # filesystem validates Skills without execution. local_shell is developer-only;
-  # gke_backend reaches dev GKE through a manually forwarded Router Service.
+  # filesystem validates Skills without execution; gke_backend reaches one
+  # fixed Sandbox through a manually forwarded Router Service.
   provider: ${SANDBOX_PROVIDER:-filesystem}
   execute_requires_confirmation: true
-  local_shell:
-    timeout_seconds: 30
-    max_output_bytes: 20000
-    workspace_root: .runtime/deepagent-workspaces
   gke:
     namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
-    template_name: ${SANDBOX_TEMPLATE_NAME:-danaan-agent-sandbox-template}
+    sandbox_name: ${SANDBOX_NAME:-deepagent-sandbox-local}
     connection_mode: direct
     router_url: ${SANDBOX_ROUTER_URL:-http://127.0.0.1:38088}
     runtime_port: 38087
-    idle_ttl_seconds: 900
-    absolute_ttl_seconds: 7200
+    workspace_root: /workspace/staff-workspaces
+    workspace_retention_seconds: 172800
 database:
   host: localhost
   port: 5432

@@ -1,61 +1,86 @@
-# DeepAgent 会话工作区 Backend
+# DeepAgent 共享 GKE Sandbox
 
-本方案让 DeepAgents 的文件 Tool 与 `execute` 使用同一个 Backend。一个 `conversation_id` 对应一个
-工作区；同一会话内多轮调用、多个脚本都能读取前一步生成的文件，不在应用主机与 Sandbox 之间隐式同步。
+## 目标
 
-## 环境选择
+生产环境使用一个由基础设施预先部署的 GKE Agent Sandbox。应用只连接这个固定 Sandbox，绝不在请求处理过程中创建或删除 `SandboxClaim`。
 
-| provider | 用途 | Skill 来源 | 执行与文件位置 |
-| --- | --- | --- | --- |
-| `filesystem` | 本地快速测试 Skill 指令 | 本地 `skill-packages/` | 只读，无 `execute`、无 artifact |
-| `local_shell` | 本地完整流程测试 | 首次创建会话时复制到会话目录 | `.runtime/deepagent-workspaces/<conversation_id>` |
-| `gke_backend` | dev / prod | runtime 镜像内 `/workspace/skill-packages` | 会话专属 GKE Sandbox 的 `/workspace` |
-
-local 可通过配置切换以上三种 provider。dev/prod 示例固定使用 `gke_backend`，不设置单独 staging 方案。
-
-## 代码职责边界
-
-`WorkspaceManager` 只负责按当前会话选择 provider、串联 session 生命周期与 Backend 返回；它不直接执行
-SQL、Kubernetes SDK 或文件系统操作。`WorkspaceSessionStore` 负责 PostgreSQL session 和 advisory lock，
-`workspace_providers.py` 负责 filesystem / local shell / GKE 的资源差异，`GkeSandboxClient` 隔离固定
-`v1alpha1` SDK 的连接细节，`WorkspaceArtifactService` 负责 `/output` 路径规范化和访问限制。
-
-DeepAgents 0.7 不再接受 backend factory。因此 local shell / GKE 使用一个已初始化的
-`ConversationSandboxBackend` 代理；每次文件或 `execute` 操作才从当前 LangGraph `thread_id` 解析实际会话
-Workspace。filesystem 则直接使用已初始化的 `FilesystemBackend`。
-
-## 目录契约
-
-- `/workspace/skill-packages`：只读 Skill 发布内容；兼容别名 `/skill-packages`。
-- `/workspace/work`：脚本中间文件；兼容别名 `/work`。
-- `/workspace/output`：允许发布给用户下载的最终文件；兼容别名 `/output`。
-
-仓库中的源码目录仍叫 `skill-packages`，无需迁移现有 Skill。GKE runtime 使用
-`sandbox-runtime.Dockerfile` 构建：Skill 文件归 `root` 且对运行用户只读，`work` 和 `output` 归 UID 1000。
-
-## 会话生命周期
-
-`ai_agent_sandbox_sessions` 持久化会话与 Backend 引用。创建前使用 PostgreSQL advisory transaction lock，
-保证多个应用副本同时处理同一会话时只创建一个工作区。GKE 会话优先按 claim name 重连；绝对 TTL 由
-Sandbox claim lifecycle 执行，应用也按 `idle_ttl_seconds` 判定长时间未使用的引用已过期。
-
-当前适配器使用 `k8s-agent-sandbox==0.4.6` 的 `SandboxClient`，对应现有 GKE 托管 controller/CRD 的
-`v1alpha1` 接口。升级 controller 与客户端必须作为同一次平台变更验证，不能单独升到要求 `v1beta1` 的客户端。
-
-## execute 与确认
-
-`local_shell` 和 `gke_backend` 都把 Backend 原生 `execute` 暴露给 Agent。配置
-`sandbox.execute_requires_confirmation: true` 时，它进入现有 LangGraph HITL 流程；GKE 可根据风险接受度
-设为 `false`。本机 shell 模式只要启用执行，就必须保留确认。
-
-## Artifact 下载
-
-脚本先把最终文件写入 `/output`，再调用 `publish_artifact`。该 Tool 只记录 Sandbox 路径、文件名、类型、
-大小和有效期，不复制到 GCS。流式接口发送 `artifact_created`，前端携带 API token 调用：
+这实现 DeepAgents 的 assistant-scoped 语义：同一 Agent 的所有 conversation 共享一个运行环境；会话文件仍在环境内部按 staff 和 conversation 分隔。
 
 ```text
-GET /agent/api/conversations/{conversation_id}/artifacts/{artifact_id}/download?staff_id=...
+DeepAgent API
+  └─ Sandbox Router
+       └─ Sandbox/deepagent-sandbox-{env} (replicas: 1)
+            └─ /workspace
+                 ├─ skill-packages/                 # 镜像内置，只读
+                 └─ staff-workspaces/
+                      └─ {staff_id}/{conversation_id}/
+                           ├─ work/
+                           └─ output/
 ```
 
-应用校验会话归属和 artifact 记录后，通过对应 Backend 的文件读取 API 返回内容。Sandbox 已删除、文件丢失
-或记录过期时返回 `410 Gone`；用户需要让 Agent 重新生成。
+## Provider
+
+| provider | 用途 | 文件位置 |
+| --- | --- | --- |
+| `filesystem` | 本地只读验证 Skill | 本地 `skill-packages/`；无执行和 artifact |
+| `gke_backend` | dev / prod | 一个固定 GKE Sandbox 的 `/workspace/staff-workspaces/<staff_id>/<conversation_id>` |
+
+## 路径契约
+
+Agent 继续使用逻辑路径：
+
+```text
+/work/<file>
+/output/<file>
+```
+
+`GkeSandboxBackend` 从可信运行上下文的 `staff_id` 与 LangGraph `thread_id`（即 `conversation_id`）映射真实路径：
+
+```text
+/work/a.json
+→ /workspace/staff-workspaces/{staff_id}/{conversation_id}/work/a.json
+
+/output/report.xlsx
+→ /workspace/staff-workspaces/{staff_id}/{conversation_id}/output/report.xlsx
+```
+
+脚本的工作目录是该 conversation 的 `work/`，故同一会话的多个脚本可用相对路径复用中间文件。`staff_id` 必须由后端认证上下文给出，并仅允许安全目录字符；`conversation_id` 是 UUID。
+
+## 代码职责
+
+`GkeSandboxBackend` 是唯一的 GKE Backend：
+
+- 连接配置中固定的 `sandbox_name`；
+- 解析当前 `staff_id` / `conversation_id`；
+- 创建当前目录的 `work/` 和 `output/`；
+- 映射文件、artifact 与执行 cwd；
+- 调用 GKE Router 的命令和文件 API。
+
+不再使用 `WorkspaceManager`、`WorkspaceSessionStore`、provider 抽象、按 conversation 的 Sandbox session，或应用侧 Claim 生命周期。
+`agent_factory` 直接选择 `FilesystemBackend` 或固定的 `GkeSandboxBackend`；`GkeWorkspaceService` 负责产物读取、目录删除和 TTL 清理。
+
+`thread_id` 仍是 conversation ID，仅用于 LangGraph checkpoint、消息历史与 HITL resume；它不再决定 Sandbox 的身份。
+
+## 生命周期
+
+- 基础设施通过 GitOps / Kubernetes 部署固定 `kind: Sandbox`，名称例如 `deepagent-sandbox-prod`，`replicas: 1`。
+- 应用启动与请求处理只检查、连接该 Sandbox；不会调用 `create_sandbox()` 或 `terminate()`。
+- 每个 conversation workspace 的最后活动时间保存到数据库。定时任务每小时清理超过 `workspace_retention_seconds`（默认 172800，即两天）的目录；artifact 记录按同一过期时间在读取时拒绝访问，并随 conversation 删除级联删除。
+- 不挂 PVC 时，Sandbox Pod 被删除并重建会清空全部 runtime workspace；这是本方案的预期行为。若未来需要跨 Pod 重启保留文件，再挂载 PVC。
+- conversation 删除只删除自己的 workspace 目录，绝不影响固定 Sandbox。
+
+## execute 与安全边界
+
+`gke_backend` 保留 DeepAgents 原生 `execute`。`execute_requires_confirmation=true` 时进入现有 HITL 流程。
+
+目录隔离避免正常业务流程中文件重名和混淆；它不是任意 shell 的 Linux 权限边界。当前方案建立在只发布、审核过的 Skill 与受控运行环境的前提上。若以后要禁止模型通过任意绝对路径访问其他 workspace，需要另行引入受控执行器。
+
+## Artifact
+
+Agent 将最终文件写入 `/output` 后调用 `publish_artifact`。记录保存逻辑输出路径和 conversation 归属；下载时后端重新映射到当前 staff/conversation 的 output 目录。Workspace 被清理、Sandbox 重建或文件丢失时下载返回 `410 Gone`。
+
+## 扩展边界
+
+一个 assistant 对应一个有状态 Sandbox replica。不能简单增加同一个 Sandbox 的副本：不同副本的本地文件系统不同，后续脚本可能读不到前一步产物。增加 GKE 节点没有影响；Router 继续路由到固定 Sandbox 的当前 Pod。
+
+多 Sandbox 扩展需要未来单独设计分片映射或共享存储，本方案不包含该能力。

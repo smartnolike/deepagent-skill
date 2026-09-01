@@ -17,13 +17,13 @@ sandbox:
   execute_requires_confirmation: ${SANDBOX_EXECUTE_REQUIRES_CONFIRMATION:-true}
   gke:
     namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
-    template_name: ${SANDBOX_TEMPLATE_NAME:-danaan-agent-sandbox-template}
+    sandbox_name: ${SANDBOX_NAME:-deepagent-sandbox-prod}
     connection_mode: direct
     router_url: ${SANDBOX_ROUTER_URL:-http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088}
     runtime_port: 38087
     router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN}
-    idle_ttl_seconds: 1800
-    absolute_ttl_seconds: 28800
+    workspace_root: /workspace/staff-workspaces
+    workspace_retention_seconds: 172800
 database:
   host: 127.0.0.1
   port: 5432

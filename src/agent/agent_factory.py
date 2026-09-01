@@ -13,6 +13,7 @@ from deepagents import (
     create_deep_agent,
     register_harness_profile,
 )
+from deepagents.backends import FilesystemBackend
 
 from agent.agent_context import AgentContext
 from agent.harness_service import DeepAgentHarnessService
@@ -25,7 +26,8 @@ from mcp_runtime.mcp_client_manager import McpClientManager
 from mcp_runtime.tool_registry import McpToolRegistry
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
-from sandbox.workspace_manager import WorkspaceManager
+from sandbox.gke_backend import GkeSandboxBackend
+from sandbox.gke_workspace_service import GkeWorkspaceService
 from tools.registry import CustomToolRegistry
 
 
@@ -56,9 +58,17 @@ def create_agent_service(
     # 因此来源必须是 /，由 DeepAgents 扫描其下的 */SKILL.md。
     project_root = Path(__file__).resolve().parents[2]
     skills_root = project_root / settings.agent.skills_dir
-    workspace_manager = WorkspaceManager(settings.sandbox, skills_root, settings.psycopg_url)
+    gke_workspace_service = None
+    if settings.sandbox.provider == "filesystem":
+        backend = FilesystemBackend(root_dir=skills_root.resolve())
+        skills_path = "/"
+    else:
+        assert settings.sandbox.gke is not None
+        backend = GkeSandboxBackend(settings.sandbox.gke)
+        skills_path = "/workspace/skill-packages"
+        gke_workspace_service = GkeWorkspaceService(settings.sandbox.gke, backend)
     tools = McpToolRegistry(mcp_manager).build() + CustomToolRegistry(
-        settings.tools, httpx_client, session_factory, memory_service, workspace_manager
+        settings.tools, httpx_client, session_factory, memory_service, gke_workspace_service
     ).build()
     graph_kwargs = {
         "tools": tools,
@@ -66,7 +76,7 @@ def create_agent_service(
             f"{settings.agent.system_prompt}\n\n{_response_language_system_prompt()}\n\n"
             f"{_skill_bound_system_prompt(settings.agent.enabled_skills)}\n\n{_workspace_system_prompt(settings)}"
         ),
-        "skills": [workspace_manager.skills_path] if settings.agent.enabled_skills else [],
+        "skills": [skills_path] if settings.agent.enabled_skills else [],
         "permissions": _workspace_permissions(settings),
         "context_schema": AgentContext,
         "interrupt_on": _confirmation_rules(mcp_manager, settings),
@@ -76,11 +86,11 @@ def create_agent_service(
     model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
     graph = create_deep_agent(
         model=model,
-        backend=workspace_manager.deepagents_backend,
+        backend=backend,
         checkpointer=checkpointer,
         **graph_kwargs,
     )
-    return DeepAgentHarnessService(graph, observability, workspace_manager)
+    return DeepAgentHarnessService(graph, observability, gke_workspace_service)
 
 
 def _excluded_tools(settings: Settings) -> frozenset[str]:
@@ -159,8 +169,7 @@ def _workspace_permissions(settings: Settings) -> list[FilesystemPermission]:
     """Keep published Skills immutable through file tools.
 
     DeepAgents 0.7 does not combine filesystem permissions with a sandbox
-    backend. GKE enforces immutability in the runtime image; local shell is a
-    development-only backend and copies Skill files read-only on creation.
+    backend. GKE enforces immutability in the runtime image.
     """
     if settings.sandbox.provider == "filesystem":
         return [FilesystemPermission(operations=["write"], paths=["/**"], mode="deny")]

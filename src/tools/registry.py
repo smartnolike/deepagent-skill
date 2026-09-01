@@ -12,7 +12,7 @@ from tools.danaan_template import get_danaan_resource_template
 from tools.skill_memory import create_get_skill_memory_tool
 from tools.user_form import request_user_form
 from services.memory_service import MemoryService
-from sandbox.workspace_manager import WorkspaceManager
+from sandbox.gke_workspace_service import GkeWorkspaceService
 from tools.workspace_artifact import create_publish_artifact_tool
 
 
@@ -25,13 +25,13 @@ class CustomToolRegistry:
         client: HttpxClient | None,
         session_factory: async_sessionmaker[AsyncSession] | None,
         memory_service: MemoryService,
-        workspace_manager: WorkspaceManager | None = None,
+        gke_workspace_service: GkeWorkspaceService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._session_factory = session_factory
         self._memory_service = memory_service
-        self._workspace_manager = workspace_manager
+        self._gke_workspace_service = gke_workspace_service
 
     def build(self) -> list[StructuredTool]:
         """Build application Tools, registering the schema reader only when its endpoint is configured."""
@@ -41,10 +41,9 @@ class CustomToolRegistry:
         ]
         if (
             self._session_factory is not None
-            and self._workspace_manager is not None
-            and self._workspace_manager.supports_artifacts
+            and self._gke_workspace_service is not None
         ):
-            tools.append(create_publish_artifact_tool(self._session_factory, self._workspace_manager))
+            tools.append(create_publish_artifact_tool(self._session_factory, self._gke_workspace_service))
         if self._session_factory is not None:
             async def get_template(resource_name: str) -> str:
                 return await get_danaan_resource_template(self._session_factory, resource_name)

@@ -33,7 +33,7 @@ def test_factory_requires_a_configured_model() -> None:
         create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
 
 
-def test_factory_accepts_initialized_conversation_backend() -> None:
+def test_factory_accepts_fixed_gke_backend() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
@@ -41,13 +41,16 @@ def test_factory_accepts_initialized_conversation_backend() -> None:
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",
             "mcp_servers": {},
-            "sandbox": {"provider": "local_shell"},
+            "sandbox": {
+                "provider": "gke_backend",
+                "gke": {"namespace": "agent-sandbox", "sandbox_name": "deepagent-sandbox", "router_url": "http://router"},
+            },
         }
     )
 
     service = create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
 
-    assert service.workspace_manager is not None
+    assert service.gke_workspace_service is not None
 
 
 def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
@@ -62,19 +65,19 @@ def test_confirmation_description_hides_mcp_implementation_details() -> None:
     assert _confirmation_description("danaan", "search") == "Review and approve this requested action."
 
 
-def test_local_shell_exposes_confirmed_generic_execute() -> None:
+def test_filesystem_hides_execute() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
             "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
             "api_auth_token": "x",
             "mcp_servers": {},
-            "sandbox": {"provider": "local_shell"},
+            "sandbox": {"provider": "filesystem"},
         }
     )
 
-    assert "execute" not in _excluded_tools(settings)
-    assert "execute" in _confirmation_rules(McpClientManager(settings), settings)
+    assert "execute" in _excluded_tools(settings)
+    assert "execute" not in _confirmation_rules(McpClientManager(settings), settings)
 
 
 def test_gke_backend_exposes_confirmed_execute() -> None:
@@ -88,7 +91,7 @@ def test_gke_backend_exposes_confirmed_execute() -> None:
                 "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
-                    "template_name": "deepagent-runtime",
+                    "sandbox_name": "deepagent-sandbox-dev",
                     "router_url": "http://sandbox-router-svc.agent-sandbox.svc.cluster.local:8080",
                 },
             },
@@ -110,7 +113,7 @@ def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
                 "provider": "gke_backend",
                 "gke": {
                     "namespace": "agent-sandbox",
-                    "template_name": "deepagent-runtime",
+                    "sandbox_name": "deepagent-sandbox-local",
                     "connection_mode": "tunnel",
                 },
             },

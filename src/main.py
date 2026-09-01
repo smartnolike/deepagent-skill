@@ -33,6 +33,7 @@ from database.engine import create_engine
 from mcp_runtime.mcp_client_manager import McpClientManager
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
+from sandbox.workspace_cleanup import gke_workspace_cleanup_loop
 
 logger = logging.getLogger(__name__)
 
@@ -86,12 +87,20 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         checkpointer,
                         app.state.session_factory,
                     )
+                    app.state.workspace_cleanup_task = None
+                    workspace_service = getattr(app.state.agent_service, "gke_workspace_service", None)
+                    if workspace_service is not None:
+                        app.state.workspace_cleanup_task = asyncio.create_task(
+                            gke_workspace_cleanup_loop(app.state.session_factory, workspace_service)
+                        )
                     logger.info("application_resources_ready persistence=postgres")
                     app.state.ready = True
                     try:
                         yield
                     finally:
                         app.state.ready = False
+                        if app.state.workspace_cleanup_task is not None:
+                            app.state.workspace_cleanup_task.cancel()
                         if app.state.httpx_client is not None:
                             await app.state.httpx_client.close()
                         if app.state.langfuse_observability is not None:
@@ -112,12 +121,20 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 app.state.httpx_client,
                 session_factory=app.state.session_factory,
             )
+            app.state.workspace_cleanup_task = None
+            workspace_service = getattr(app.state.agent_service, "gke_workspace_service", None)
+            if workspace_service is not None:
+                app.state.workspace_cleanup_task = asyncio.create_task(
+                    gke_workspace_cleanup_loop(app.state.session_factory, workspace_service)
+                )
             logger.info("application_resources_ready persistence=in_memory")
             app.state.ready = True
             try:
                 yield
             finally:
                 app.state.ready = False
+                if app.state.workspace_cleanup_task is not None:
+                    app.state.workspace_cleanup_task.cancel()
                 if app.state.httpx_client is not None:
                     await app.state.httpx_client.close()
                 if app.state.langfuse_observability is not None:

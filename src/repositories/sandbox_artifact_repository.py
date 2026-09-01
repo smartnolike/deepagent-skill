@@ -25,13 +25,10 @@ class SandboxArtifactRepository:
             )
         )
 
-    async def list(self, conversation_id: uuid.UUID, sandbox_session_id: uuid.UUID) -> list[SandboxArtifact]:
+    async def list(self, conversation_id: uuid.UUID) -> list[SandboxArtifact]:
         result = await self._session.scalars(
             select(SandboxArtifact)
-            .where(
-                SandboxArtifact.conversation_id == conversation_id,
-                SandboxArtifact.sandbox_session_id == sandbox_session_id,
-            )
+            .where(SandboxArtifact.conversation_id == conversation_id)
             .order_by(SandboxArtifact.created_at.asc())
         )
         return list(result)

@@ -13,31 +13,26 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from database.models.agent.sandbox_artifact import SandboxArtifact
 from repositories.sandbox_artifact_repository import SandboxArtifactRepository
-from repositories.sandbox_session_repository import SandboxSessionRepository
-from sandbox.workspace_manager import WorkspaceManager, WorkspaceReference
+from sandbox.gke_workspace_service import GkeWorkspaceService
 
 _MAX_ARTIFACT_BYTES = 20 * 1024 * 1024
 
 
 def create_publish_artifact_tool(
-    session_factory: async_sessionmaker[AsyncSession], workspace_manager: WorkspaceManager
+    session_factory: async_sessionmaker[AsyncSession], workspace_service: GkeWorkspaceService
 ) -> StructuredTool:
     async def publish_artifact(path: str, filename: str | None = None) -> dict[str, object]:
-        path = workspace_manager.normalize_artifact_path(path)
-        if not path.startswith("/workspace/output/"):
-            raise ValueError("Only files under /workspace/output may be published")
+        path = workspace_service.normalize_output_path(path)
         thread_id = (ensure_config().get("configurable") or {}).get("thread_id")
         if not isinstance(thread_id, str):
             raise RuntimeError("publish_artifact requires a conversation thread")
         conversation_id = uuid.UUID(thread_id)
+        configurable = ensure_config().get("configurable") or {}
+        staff_id = configurable.get("staff_id")
+        if not isinstance(staff_id, str):
+            raise RuntimeError("publish_artifact requires a staff ID")
         async with session_factory() as session:
-            workspace = await SandboxSessionRepository(session).get(conversation_id)
-            if workspace is None or workspace.status != "active":
-                raise RuntimeError("No active workspace exists for this conversation")
-            reference = WorkspaceReference(
-                workspace.id, workspace.provider, workspace.workspace_reference, workspace.namespace, workspace.expires_at
-            )
-            content = await asyncio.to_thread(workspace_manager.download_artifact, reference, path)
+            content = await asyncio.to_thread(workspace_service.read_artifact, staff_id, conversation_id, path)
             if len(content) > _MAX_ARTIFACT_BYTES:
                 raise ValueError("Artifact exceeds the 20 MiB download limit")
             download_name = PurePosixPath(filename or path).name.replace('"', "_").replace("\\", "_")
@@ -46,12 +41,11 @@ def create_publish_artifact_tool(
             artifact = await SandboxArtifactRepository(session).create(
                 SandboxArtifact(
                     conversation_id=conversation_id,
-                    sandbox_session_id=workspace.id,
                     sandbox_path=path,
                     filename=download_name[:255],
                     content_type=mimetypes.guess_type(path)[0] or "application/octet-stream",
                     size_bytes=len(content),
-                    expires_at=workspace.expires_at,
+                    expires_at=workspace_service.artifact_expiry,
                 )
             )
         return {"artifact_id": str(artifact.id), "filename": artifact.filename, "size_bytes": artifact.size_bytes}

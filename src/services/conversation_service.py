@@ -20,11 +20,10 @@ from database.models.agent.agent_run import AgentRun
 from database.models.agent.tool_confirmation import ToolConfirmation
 from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
+from repositories.conversation_workspace_repository import ConversationWorkspaceRepository
 from repositories.message_repository import MessageRepository
 from repositories.sandbox_artifact_repository import SandboxArtifactRepository
-from repositories.sandbox_session_repository import SandboxSessionRepository
 from repositories.tool_confirmation_repository import ToolConfirmationRepository
-from sandbox.workspace_manager import WorkspaceReference
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
 
@@ -79,10 +78,10 @@ class ConversationService:
 
     async def delete(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> None:
         conversation = await self._require_conversation(conversation_id, staff_id, response_language)
-        workspace_manager = getattr(self._agent_service, "workspace_manager", None)
-        if workspace_manager is not None:
+        workspace_service = getattr(self._agent_service, "gke_workspace_service", None)
+        if workspace_service is not None:
             try:
-                await asyncio.to_thread(workspace_manager.release, conversation_id)
+                await asyncio.to_thread(workspace_service.delete_workspace, staff_id, conversation_id)
             except Exception as exc:
                 logger.warning(
                     "conversation_workspace_release_failed conversation_id=%s error_type=%s",
@@ -111,10 +110,7 @@ class ConversationService:
         self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
     ) -> list[dict[str, object]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
-        workspace = await SandboxSessionRepository(self._session).get(conversation_id)
-        if workspace is None:
-            return []
-        artifacts = await SandboxArtifactRepository(self._session).list(conversation_id, workspace.id)
+        artifacts = await SandboxArtifactRepository(self._session).list(conversation_id)
         now = datetime.now(UTC)
         return [
             {"id": str(item.id), "filename": item.filename, "size_bytes": item.size_bytes}
@@ -128,17 +124,11 @@ class ConversationService:
         artifact = await self.artifact(conversation_id, artifact_id, staff_id, response_language)
         if artifact.expires_at is not None and artifact.expires_at <= datetime.now(UTC):
             raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE)
-        workspace = await SandboxSessionRepository(self._session).get(conversation_id)
-        if workspace is None or workspace.id != artifact.sandbox_session_id or workspace.status != "active":
-            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE)
-        manager = getattr(self._agent_service, "workspace_manager", None)
-        if manager is None:
+        workspace_service = getattr(self._agent_service, "gke_workspace_service", None)
+        if workspace_service is None:
             raise DomainError("ARTIFACT_STORAGE_DISABLED", "Workspace artifacts are disabled", status.HTTP_503_SERVICE_UNAVAILABLE)
-        reference = WorkspaceReference(
-            workspace.id, workspace.provider, workspace.workspace_reference, workspace.namespace, workspace.expires_at
-        )
         try:
-            content = await asyncio.to_thread(manager.download_artifact, reference, artifact.sandbox_path)
+            content = await asyncio.to_thread(workspace_service.read_artifact, staff_id, conversation_id, artifact.sandbox_path)
         except Exception as exc:
             logger.info("workspace_artifact_unavailable artifact_id=%s error_type=%s", artifact_id, type(exc).__name__)
             raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE) from exc
@@ -164,6 +154,8 @@ class ConversationService:
         previous_language = _language_from_history(previous_history)
         response_language = resolve_response_language(content, previous_language=previous_language)
         user_message = await self._messages.create(conversation_id, "user", content)
+        if getattr(self._agent_service, "gke_workspace_service", None) is not None:
+            await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
         run = await self._runs.create(conversation_id, user_message.id)
         logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
         history = await self._messages.list(conversation_id)
@@ -246,6 +238,8 @@ class ConversationService:
         if confirmation is not None:
             confirmation = await self._confirmations.decide(confirmation, staff_id, action)
         await self._runs.resume(run)
+        if getattr(self._agent_service, "gke_workspace_service", None) is not None:
+            await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
         if confirmation is not None:
             logger.info(
                 "tool_confirmation_decided confirmation_id=%s agent_run_id=%s action=%s",
