@@ -32,3 +32,14 @@ def test_command_mapping_rewrites_base64_logical_paths_but_not_physical_paths() 
 
     assert base64.b64encode(physical.encode()).decode() in mapped
     assert mapped.endswith(physical)
+
+
+def test_command_output_replaces_current_workspace_paths_with_logical_paths() -> None:
+    paths = ConversationWorkspacePaths("/workspace/staff-workspaces", "staff_123", "conversation")
+    physical_root = "/workspace/staff-workspaces/staff_123/conversation"
+
+    redacted = paths.redact_command_output(
+        f"work={physical_root}/work/input.json\nout={physical_root}/output/report.xlsx\nroot={physical_root}\n"
+    )
+
+    assert redacted == "work=/work/input.json\nout=/output/report.xlsx\nroot=<conversation-workspace>\n"

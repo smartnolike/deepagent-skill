@@ -50,7 +50,7 @@ class GkeSandboxBackend(BaseSandbox):
             f"sh -c {shlex.quote(shell_command)}", timeout=timeout or self._settings.command_timeout_seconds
         )
         output = "".join(part for part in (getattr(result, "stdout", ""), getattr(result, "stderr", "")) if part)
-        return ExecuteResponse(output=output or "<no output>", exit_code=result.exit_code, truncated=False)
+        return ExecuteResponse(output=paths.redact_command_output(output) or "<no output>", exit_code=result.exit_code, truncated=False)
 
     async def aexecute(self, command: str, *, timeout: int | None = None) -> ExecuteResponse:
         return await asyncio.to_thread(self.execute, command, timeout=timeout)

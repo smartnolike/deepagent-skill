@@ -92,3 +92,18 @@ class ConversationWorkspacePaths:
             return f"{match.group(1)}{base64.b64encode(mapped.encode()).decode()}{match.group(1)}"
 
         return re.sub(r"(['\"])([A-Za-z0-9+/]{8,}={0,2})\1", replace_base64, command)
+
+    def redact_command_output(self, output: str) -> str:
+        """Hide this conversation's physical paths from Agent-visible output.
+
+        A command may print a resolved file name.  Returning that path lets the
+        model accidentally feed staff- and conversation-scoped infrastructure
+        details back into a file Tool, which intentionally accepts only the
+        stable logical workspace paths.  Preserve useful paths as ``/work`` or
+        ``/output`` and redact a bare workspace root entirely.
+        """
+        work = f"{self.workspace}/work"
+        output_dir = f"{self.workspace}/output"
+        return output.replace(work, "/work").replace(output_dir, "/output").replace(
+            self.workspace, "<conversation-workspace>"
+        )

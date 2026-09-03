@@ -34,10 +34,12 @@ class FakeConnector:
 class FakeCommands:
     def __init__(self) -> None:
         self.calls: list[tuple[str, int]] = []
+        self.stdout = "created\n"
+        self.stderr = "warning\n"
 
     def run(self, command: str, timeout: int):
         self.calls.append((command, timeout))
-        return SimpleNamespace(stdout="created\n", stderr="warning\n", exit_code=0)
+        return SimpleNamespace(stdout=self.stdout, stderr=self.stderr, exit_code=0)
 
 
 def backend() -> tuple[GkeSandboxBackend, SimpleNamespace, str]:
@@ -70,6 +72,19 @@ def test_execute_maps_logical_paths_and_uses_default_timeout(configured: str) ->
         f"mkdir -p {root}/work {root}/output && cd {root}/work && export DEEPAGENT_WORKSPACE={root} && python {root}/work/script.py",
     ]
     assert result.output == "created\nwarning\n"
+
+
+def test_execute_redacts_current_conversation_physical_paths(configured: str) -> None:
+    adapter, sandbox, _ = backend()
+    root = f"/workspace/staff-workspaces/staff_123/{configured}"
+    sandbox.commands.stdout = f"created={root}/work/result.json\n"
+    sandbox.commands.stderr = f"published={root}/output/report.xlsx\nworkspace={root}\n"
+
+    result = adapter.execute("echo paths")
+
+    assert result.output == "created=/work/result.json\npublished=/output/report.xlsx\nworkspace=<conversation-workspace>\n"
+    assert "staff_123" not in result.output
+    assert configured not in result.output
 
 
 @pytest.mark.parametrize(
