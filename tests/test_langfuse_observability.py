@@ -62,7 +62,7 @@ def test_observability_initializes_sdk_with_application_environment_and_release(
 
     assert captured["environment"] == "local"
     assert captured["release"] == "release-1"
-    assert captured["base_url"] == "https://cloud.langfuse.com"
+    assert captured["base_url"] == "http://127.0.0.1:3000"
 
 
 def test_callback_uses_only_the_cross_version_public_key_argument(monkeypatch) -> None:
