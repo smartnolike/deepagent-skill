@@ -151,6 +151,17 @@ mcp_servers:
     assert settings.mcp_servers["danaan"].headers["Authorization"] == "Bearer mcp-secret"
 
 
+def test_mcp_relative_root_ca_path_is_resolved_from_project_root(monkeypatch, tmp_path) -> None:
+    """MCP CA 路径不应受服务进程工作目录影响。"""
+    from config.mcp_server_settings import PROJECT_ROOT, McpServerSettings
+
+    monkeypatch.chdir(tmp_path)
+
+    settings = McpServerSettings(root_ca_path="build/root.cer")
+
+    assert settings.root_ca_path == (PROJECT_ROOT / "build/root.cer").resolve()
+
+
 def test_local_langfuse_accepts_direct_environment_keys() -> None:
     settings = Settings.model_validate(
         {

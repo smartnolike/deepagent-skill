@@ -3,7 +3,9 @@
 # headers 可包含服务端 Token；本模块绝不记录 URL 参数、headers 或 MCP 调用参数。
 
 import json
+import ssl
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -32,6 +34,8 @@ class McpClient:
             httpx.AsyncClient(
                 headers=self._settings.headers,
                 timeout=self._settings.timeout_seconds,
+                verify=self._tls_verification_context(),
+                trust_env=False,
             )
         )
         read_stream, write_stream, _ = await self._stack.enter_async_context(
@@ -42,6 +46,20 @@ class McpClient:
         )
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
+
+    def _tls_verification_context(self) -> ssl.SSLContext:
+        """Use system trust roots plus the configured private root CA, when present."""
+        root_ca_path = self._settings.root_ca_path
+        if root_ca_path is None:
+            return ssl.create_default_context()
+        resolved_path = Path(root_ca_path).resolve()
+        if not resolved_path.is_file() or resolved_path.stat().st_size == 0:
+            raise RuntimeError(f"MCP root certificate is missing or empty: {resolved_path}")
+        # httpx 0.28 已弃用 verify="/path/to/ca.pem"。先加载系统根证书，再追加
+        # 企业内部根证书，既能访问内部 MCP，也不会破坏公有 CA 的信任链。
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=str(resolved_path))
+        return context
 
     async def list_tools(self) -> list[McpToolDefinition]:
         """Read the server-owned Tool schemas used to register LangChain Tools."""

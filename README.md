@@ -43,6 +43,9 @@ set AGENT_ENV=local
 已启用的 MCP 在服务启动时必须完成连接、`initialize()` 与 `list_tools()`；应用仅将 YAML 白名单中的
 真实 Tool Schema 注册给 DeepAgent。任一启用 MCP 不可用、或缺少白名单 Tool 时，应用启动失败。运行中 MCP
 服务重启导致 Session 失效时，应用会自动建立新 Session 并使用原始参数重试该 Tool 一次；再次失败时返回受控错误。
+每个 HTTP MCP 可通过 `root_ca_path` 配置内部根证书；示例配置默认读取
+`${MCP_ROOT_CA_PATH:-build/root.cer}`。MCP 会同时信任系统根证书与该 PEM 格式的根证书，且始终校验证书主机名；
+根证书为空或缺失时，已启用的 MCP 会在启动阶段失败，而不会降级为跳过 TLS 校验。
 所有 `/agent/api/*` calls require `Authorization: Bearer <api_auth_token>`。local、dev、prod 都必须配置真实
 `agent.model`、PostgreSQL 与 HTTP MCP；测试中的 Agent、数据库与 MCP 替身仅在测试层注入，生产代码不提供 Mock fallback。
 DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `agent.enabled_skills` 启用。

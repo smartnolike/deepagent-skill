@@ -48,6 +48,8 @@ mcp_servers:
     enabled: true
     transport: http
     url: ${DANAAN_MCP_URL}
+    # 自签/企业内部 CA；部署时可通过 MCP_ROOT_CA_PATH 覆盖。
+    root_ca_path: ${MCP_ROOT_CA_PATH:-build/root.cer}
     headers:
       Authorization: Bearer ${DANAAN_MCP_TOKEN}
     timeout_seconds: 15

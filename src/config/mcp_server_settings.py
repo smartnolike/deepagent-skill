@@ -2,9 +2,12 @@
 
 # 每个 MCP Server 独立声明 transport、headers、重连策略和允许暴露的工具。
 
+from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, Field, HttpUrl, model_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 class McpServerSettings(BaseModel):
@@ -14,6 +17,7 @@ class McpServerSettings(BaseModel):
     transport: Literal["http"] = "http"
     url: HttpUrl | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    root_ca_path: Path | None = None
     timeout_seconds: float = 15.0
     reconnect_initial_delay_seconds: float = 1.0
     reconnect_max_delay_seconds: float = 30.0
@@ -23,6 +27,14 @@ class McpServerSettings(BaseModel):
         default_factory=dict
     )
     fixed_arguments: dict[str, dict[str, str]] = Field(default_factory=dict)
+
+    @field_validator("root_ca_path", mode="after")
+    @classmethod
+    def resolve_root_ca_path(cls, value: Path | None) -> Path | None:
+        """Resolve a configured CA file independently of the process working directory."""
+        if value is None or value.is_absolute():
+            return value
+        return (PROJECT_ROOT / value).resolve()
 
     @model_validator(mode="after")
     def validate_tool_policies(self) -> "McpServerSettings":
