@@ -149,7 +149,6 @@ class McpClientManager:
                 "fields": {
                     "server_id": server_id,
                     "tool_name": tool_name,
-                    "arguments": arguments,
                     "result": result,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
@@ -241,6 +240,7 @@ class McpClientManager:
                     "server_id": server_id,
                     "startup": startup,
                     "tool_count": len(self._tool_definitions[server_id]),
+                    "tool_names": [definition.name for definition in self._tool_definitions[server_id]],
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
             },

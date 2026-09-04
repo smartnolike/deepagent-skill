@@ -142,7 +142,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 await app.state.mcp_manager.close()
                 await engine.dispose()
 
-    app = FastAPI(title="DeepAgent Platform MVP", lifespan=lifespan)
+    app = FastAPI(title="Danaan AI Assistant", lifespan=lifespan)
     app.include_router(router)
 
     @app.get("/health", include_in_schema=False)
@@ -233,11 +233,11 @@ def start_server() -> None:
     # 从而绕过模块导入阶段设置的 event loop policy，导致 psycopg3 异步 Checkpointer 无法启动。
     import uvicorn
 
-    logger.info("server_starting host=0.0.0.0 port=8000")
+    logger.info("server_starting host=0.0.0.0 port=38085")
     uvicorn.run(
         "main:app",
         host="0.0.0.0",
-        port=8000,
+        port=38085,
         loop="asyncio:SelectorEventLoop" if sys.platform == "win32" else "auto",
         app_dir=str(Path(__file__).resolve().parent),
     )

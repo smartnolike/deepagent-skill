@@ -23,6 +23,8 @@ class McpServerSettings(BaseModel):
     reconnect_max_delay_seconds: float = 30.0
     tools: list[str] = Field(default_factory=list)
     confirmation_required_tools: list[str] = Field(default_factory=list)
+    frontend_diagnostic_tools: list[str] = Field(default_factory=list)
+    expose_frontend_diagnostic_results: bool = False
     context_argument_bindings: dict[str, dict[str, Literal["staff_id", "conversation_id"]]] = Field(
         default_factory=dict
     )
@@ -43,6 +45,9 @@ class McpServerSettings(BaseModel):
         unknown = set(self.confirmation_required_tools) - configured_tools
         if unknown:
             raise ValueError(f"confirmation_required_tools are not allowlisted: {', '.join(sorted(unknown))}")
+        unknown_diagnostic_tools = set(self.frontend_diagnostic_tools) - configured_tools
+        if unknown_diagnostic_tools:
+            raise ValueError(f"frontend_diagnostic_tools are not allowlisted: {', '.join(sorted(unknown_diagnostic_tools))}")
         policy_tools = set(self.context_argument_bindings) | set(self.fixed_arguments)
         unknown_policy_tools = policy_tools - configured_tools
         if unknown_policy_tools:

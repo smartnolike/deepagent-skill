@@ -81,7 +81,7 @@ def create_agent_service(
         "context_schema": AgentContext,
         "interrupt_on": _confirmation_rules(mcp_manager, settings),
         "middleware": [ResponseLanguageMiddleware()],
-        "name": "deepagent-platform",
+        "name": "danaan-ai-assistant",
     }
     model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
     graph = create_deep_agent(
@@ -90,7 +90,12 @@ def create_agent_service(
         checkpointer=checkpointer,
         **graph_kwargs,
     )
-    return DeepAgentHarnessService(graph, observability, gke_workspace_service)
+    diagnostic_tools = {
+        f"{server_id}__{tool_name}": server.expose_frontend_diagnostic_results
+        for server_id, server in mcp_manager.server_settings.items()
+        for tool_name in server.frontend_diagnostic_tools
+    }
+    return DeepAgentHarnessService(graph, observability, diagnostic_tools, gke_workspace_service)
 
 
 def _excluded_tools(settings: Settings) -> frozenset[str]:

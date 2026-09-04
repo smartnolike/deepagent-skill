@@ -13,13 +13,13 @@ agent:
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
 sandbox:
-  provider: gke_backend
-  execute_requires_confirmation: ${SANDBOX_EXECUTE_REQUIRES_CONFIRMATION:-true}
+  provider: ${SANDBOX_PROVIDER:-gke_backend}
+  execute_requires_confirmation: false
   gke:
     namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
-    sandbox_claim_name: ${SANDBOX_CLAIM_NAME:-deepagent-assistant-dev}
+    sandbox_claim_name: danaan-agent-sandbox-claim
     connection_mode: direct
-    router_url: ${SANDBOX_ROUTER_URL:-http://danaan-agent-sandbox-router-svc.danaan-gcp-portal.svc.cluster.local:38088}
+    router_url: http://danaan-agent-sandbox-router-svc:38088
     runtime_port: 38087
     router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN:-}
     workspace_root: /workspace/staff-workspaces
@@ -57,6 +57,8 @@ mcp_servers:
     reconnect_max_delay_seconds: 30
     tools: [external_resource_add]
     confirmation_required_tools: [external_resource_add]
+    frontend_diagnostic_tools: [get_resource_version]
+    expose_frontend_diagnostic_results: true
     context_argument_bindings:
       external_resource_add:
         body.creator: staff_id

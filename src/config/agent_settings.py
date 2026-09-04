@@ -19,7 +19,7 @@ class AgentSettings(BaseModel):
     token_auth: TokenAuthSettings | None = None
     skills_dir: str = "skill-packages"
     enabled_skills: list[str] = Field(default_factory=list)
-    system_prompt: str = "You are the DeepAgent Platform assistant. Use applicable skills and tools."
+    system_prompt: str = "You are the Danaan AI Assistant. Use applicable skills and tools."
 
     @model_validator(mode="after")
     def validate_model_auth(self) -> "AgentSettings":

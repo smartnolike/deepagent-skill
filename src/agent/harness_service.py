@@ -24,10 +24,12 @@ class DeepAgentHarnessService:
         self,
         graph: Any,
         observability: LangfuseObservability | None = None,
+        frontend_diagnostic_tools: dict[str, bool] | None = None,
         gke_workspace_service: Any | None = None,
     ) -> None:
         self._graph = graph
         self._observability = observability
+        self._frontend_diagnostic_tools = frontend_diagnostic_tools or {}
         self.gke_workspace_service = gke_workspace_service
 
     async def reply(
@@ -97,7 +99,7 @@ class DeepAgentHarnessService:
 
     async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """将普通消息和 LangGraph HITL interrupt 统一转换为 API SSE 事件。"""
-        active_tool_names: list[str] = []
+        active_tools: dict[str, dict[str, object]] = {}
         async for mode, value in self._graph.astream(input_value, config=config, context=context, stream_mode=["messages", "updates"]):
             if mode == "messages":
                 message, metadata = value
@@ -107,21 +109,23 @@ class DeepAgentHarnessService:
                         yield "artifact_created", artifact
                     continue
                 if not isinstance(message, AIMessage):
+                    if isinstance(message, ToolMessage) and message.name in self._frontend_diagnostic_tools:
+                        yield "tool_result", _tool_result_payload(
+                            message.name,
+                            active_tools.get(message.name, {}),
+                            message.content,
+                            self._frontend_diagnostic_tools[message.name],
+                        )
                     continue
                 for tool_call in message.tool_calls:
                     tool_name = tool_call["name"]
-                    active_tool_names.append(tool_name)
+                    active_tools[tool_name] = _redact_tool_value(tool_call.get("args", {}))
                     logger.info("agent_tool_requested tool_name=%s", tool_name)
                     if tool_name != "get_skill_memory":
                         yield "tool_start", {"name": tool_name}
                 text = message.text if isinstance(message.text, str) else ""
                 if text:
                     yield "token", {"content": text}
-                if metadata.get("langgraph_node") == "tools":
-                    for tool_name in active_tool_names:
-                        if tool_name != "get_skill_memory":
-                            yield "tool_end", {"name": tool_name}
-                    active_tool_names.clear()
             elif mode == "updates" and isinstance(value, dict) and "__interrupt__" in value:
                 for interrupt in value["__interrupt__"]:
                     request = getattr(interrupt, "value", interrupt)
@@ -161,3 +165,51 @@ def _artifact_payload(content: object) -> dict[str, object] | None:
         "filename": str(value.get("filename", "download")),
         "size_bytes": int(value.get("size_bytes", 0)),
     }
+
+
+_SENSITIVE_KEY_PARTS = frozenset({"password", "secret", "token", "authorization", "credential", "api_key"})
+
+
+def _redact_tool_value(value: object, key: str = "") -> object:
+    """Return JSON-safe diagnostic data without credential-like values."""
+    normalized_key = key.lower().replace("-", "_")
+    if any(part in normalized_key for part in _SENSITIVE_KEY_PARTS):
+        return "[REDACTED]"
+    if isinstance(value, dict):
+        return {str(item_key): _redact_tool_value(item_value, str(item_key)) for item_key, item_value in value.items()}
+    if isinstance(value, list):
+        return [_redact_tool_value(item, key) for item in value]
+    if value is None or isinstance(value, str | int | float | bool):
+        return value
+    return str(value)
+
+
+def _tool_result_payload(tool_name: str, arguments: object, content: object, expose_result: bool) -> dict[str, object]:
+    """Build a frontend diagnostic record from a completed ToolMessage."""
+    parsed_result: object = content
+    source = "tool_message_text"
+    if isinstance(content, str):
+        try:
+            parsed_result = json.loads(content)
+            source = "tool_message_json"
+        except json.JSONDecodeError:
+            pass
+    sanitized_result = _redact_tool_value(parsed_result)
+    summary: dict[str, object] = {"result_type": type(parsed_result).__name__}
+    if isinstance(parsed_result, dict):
+        summary["top_level_keys"] = sorted(str(key) for key in parsed_result)
+        data = parsed_result.get("data")
+        summary["data"] = {
+            "present": "data" in parsed_result,
+            "is_non_empty_string": isinstance(data, str) and bool(data.strip()),
+            "has_exactly_one_delimiter": isinstance(data, str) and data.count("@@") == 1,
+        }
+    payload: dict[str, object] = {
+        "name": tool_name,
+        "arguments": arguments,
+        "source": source,
+        "summary": summary,
+    }
+    if expose_result:
+        payload["result"] = sanitized_result
+    return payload
