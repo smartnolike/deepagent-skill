@@ -3,6 +3,7 @@
 # headers 可包含服务端 Token；本模块绝不记录 URL 参数、headers 或 MCP 调用参数。
 
 import json
+import logging
 import ssl
 from contextlib import AsyncExitStack
 from pathlib import Path
@@ -14,6 +15,9 @@ from mcp.client.streamable_http import streamable_http_client
 
 from config.mcp_server_settings import McpServerSettings
 from mcp_runtime.tool_definition import McpToolDefinition
+
+
+logger = logging.getLogger(__name__)
 
 
 class McpClient:
@@ -88,17 +92,53 @@ class McpClient:
         # MCP SDK 负责包成 JSON-RPC 的 params.arguments；arguments 本身必须保持业务字段扁平。
         result = await self._session.call_tool(tool_name, arguments)
         if getattr(result, "isError", False):
+            logger.warning("mcp_raw_tool_error", extra={"fields": {"tool_name": tool_name}})
             raise RuntimeError("MCP tool reported an error")
         structured = getattr(result, "structuredContent", None)
         if isinstance(structured, dict):
+            logger.info(
+                "mcp_tool_result_normalized",
+                extra={
+                    "fields": {
+                        "tool_name": tool_name,
+                        "source": "structuredContent",
+                        "top_level_keys": sorted(str(key) for key in structured.keys()),
+                    }
+                },
+            )
             return structured
         content = getattr(result, "content", [])
-        for item in content:
+        for index, item in enumerate(content):
             text = getattr(item, "text", None)
             if text:
                 parsed = json.loads(text)
                 if isinstance(parsed, dict):
+                    logger.info(
+                        "mcp_tool_result_normalized",
+                        extra={
+                            "fields": {
+                                "tool_name": tool_name,
+                                "source": "content_text_json",
+                                "content_index": index,
+                                "top_level_keys": sorted(str(key) for key in parsed.keys()),
+                            }
+                        },
+                    )
                     return parsed
+                logger.warning(
+                    "mcp_tool_text_result_not_object",
+                    extra={
+                        "fields": {
+                            "tool_name": tool_name,
+                            "content_index": index,
+                            "parsed_type": type(parsed).__name__,
+                        }
+                    },
+                )
+        logger.warning(
+            "mcp_tool_result_missing_object",
+            extra={"fields": {"tool_name": tool_name, "content_item_count": len(content)}},
+        )
         raise RuntimeError("MCP tool returned no object result")
 
     async def close(self) -> None:

@@ -14,23 +14,26 @@ logger = logging.getLogger(__name__)
 
 
 async def get_danaan_resource_template(
-    session_factory: async_sessionmaker[AsyncSession], resource_name: str
+    session_factory: async_sessionmaker[AsyncSession], resource_name: str, template_version: str
 ) -> str:
-    """读取资源名称对应的最新 Danaan resourceContent 模板。"""
+    """读取资源名称和模板版本对应的 Danaan resourceContent 模板。"""
     started = time.perf_counter()
     logger.info(
         "danaan_resource_template_requested",
-        extra={"fields": {"resource_name": resource_name}},
+        extra={"fields": {"resource_name": resource_name, "template_version": template_version}},
     )
     try:
         async with session_factory() as session:
-            template = await DanaanTemplateRepository(session).get_latest_template_content(resource_name)
+            template = await DanaanTemplateRepository(session).get_latest_template_content(
+                resource_name, template_version
+            )
     except Exception as exc:
         logger.exception(
             "danaan_resource_template_failed",
             extra={
                 "fields": {
                     "resource_name": resource_name,
+                    "template_version": template_version,
                     "error_type": type(exc).__name__,
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
@@ -42,9 +45,11 @@ async def get_danaan_resource_template(
         extra={
             "fields": {
                 "resource_name": resource_name,
+                "template_version": template_version,
                 "result": {
                     "found": template is not None,
                     "resource_name": resource_name,
+                    "template_version": template_version,
                     "resource_content": template,
                 },
                 "duration_ms": int((time.perf_counter() - started) * 1000),
@@ -52,6 +57,11 @@ async def get_danaan_resource_template(
         },
     )
     return json.dumps(
-        {"found": template is not None, "resource_name": resource_name, "resource_content": template},
+        {
+            "found": template is not None,
+            "resource_name": resource_name,
+            "template_version": template_version,
+            "resource_content": template,
+        },
         ensure_ascii=False,
     )

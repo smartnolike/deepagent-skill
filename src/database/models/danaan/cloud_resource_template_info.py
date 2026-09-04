@@ -14,7 +14,7 @@ class CloudResourceTemplateInfo(DanaanReadBase):
     """Danaan 云资源模板的只读 SQLAlchemy Model。"""
 
     __tablename__ = "cloud_resource_template_info"
-    __table_args__ = {"schema": "public", "info": {"read_only": True}}
+    __table_args__ = {"info": {"read_only": True}}
 
     res_template_id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     cloud_resource_name: Mapped[str] = mapped_column(Text, nullable=False)

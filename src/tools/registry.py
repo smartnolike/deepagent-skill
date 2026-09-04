@@ -45,14 +45,14 @@ class CustomToolRegistry:
         ):
             tools.append(create_publish_artifact_tool(self._session_factory, self._gke_workspace_service))
         if self._session_factory is not None:
-            async def get_template(resource_name: str) -> str:
-                return await get_danaan_resource_template(self._session_factory, resource_name)
+            async def get_template(resource_name: str, template_version: str) -> str:
+                return await get_danaan_resource_template(self._session_factory, resource_name, template_version)
 
             tools.append(
                 StructuredTool.from_function(
                     coroutine=get_template,
                     name="danaan_get_resource_template",
-                    description="Read the latest Danaan resourceContent template by resourceName.",
+                    description="Read the Danaan resourceContent template by resourceName and exact template version.",
                 )
             )
         if self._client is None or self._settings.danaan_json_schema_url is None:
