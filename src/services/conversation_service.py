@@ -41,6 +41,7 @@ class ConversationService:
         self._conversations = ConversationRepository(session)
         self._messages = MessageRepository(session)
         self._runs = AgentRunRepository(session)
+        self._artifacts = SandboxArtifactRepository(session)
         self._confirmations = ToolConfirmationRepository(session)
         self._agent_service = agent_service
         self._memory_service = memory_service
@@ -91,17 +92,24 @@ class ConversationService:
         await self._conversations.delete(conversation)
         logger.info("conversation_deleted conversation_id=%s staff_id=%s", conversation_id, staff_id)
 
-    async def messages(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> list[dict[str, str]]:
+    async def messages(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> list[dict[str, object]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
         messages = await self._messages.list(conversation_id)
+        artifacts_by_message = self._artifacts_by_message(await self._artifacts.list(conversation_id))
         return [
-            {"id": str(item.id), "role": item.role, "content": item.content, "created_at": item.created_at.isoformat()}
+            {
+                "id": str(item.id),
+                "role": item.role,
+                "content": item.content,
+                "created_at": item.created_at.isoformat(),
+                "artifacts": artifacts_by_message.get(item.id, []),
+            }
             for item in messages
         ]
 
     async def artifact(self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage):
         await self._require_conversation(conversation_id, staff_id, response_language)
-        artifact = await SandboxArtifactRepository(self._session).get(artifact_id, conversation_id)
+        artifact = await self._artifacts.get(artifact_id, conversation_id)
         if artifact is None:
             raise DomainError("ARTIFACT_NOT_FOUND", "Artifact not found", status.HTTP_404_NOT_FOUND)
         return artifact
@@ -110,10 +118,15 @@ class ConversationService:
         self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
     ) -> list[dict[str, object]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
-        artifacts = await SandboxArtifactRepository(self._session).list(conversation_id)
+        artifacts = await self._artifacts.list(conversation_id)
         now = datetime.now(UTC)
         return [
-            {"id": str(item.id), "filename": item.filename, "size_bytes": item.size_bytes}
+            {
+                "id": str(item.id),
+                "assistant_message_id": str(item.assistant_message_id) if item.assistant_message_id else None,
+                "filename": item.filename,
+                "size_bytes": item.size_bytes,
+            }
             for item in artifacts
             if item.expires_at is None or item.expires_at > now
         ]
@@ -146,6 +159,23 @@ class ConversationService:
         confirmations = await self._confirmations.list(conversation_id, decision)
         return [self._confirmation_payload(item) for item in confirmations]
 
+    @staticmethod
+    def _artifacts_by_message(artifacts) -> dict[uuid.UUID, list[dict[str, object]]]:
+        """Group non-expired artifacts by the assistant reply that published them."""
+        now = datetime.now(UTC)
+        grouped: dict[uuid.UUID, list[dict[str, object]]] = {}
+        for artifact in artifacts:
+            if artifact.assistant_message_id is None or (artifact.expires_at is not None and artifact.expires_at <= now):
+                continue
+            grouped.setdefault(artifact.assistant_message_id, []).append(
+                {
+                    "artifact_id": str(artifact.id),
+                    "filename": artifact.filename,
+                    "size_bytes": artifact.size_bytes,
+                }
+            )
+        return grouped
+
     async def send(
         self, conversation_id: uuid.UUID, staff_id: str, content: str, response_language: ResponseLanguage
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
@@ -177,6 +207,7 @@ class ConversationService:
                     return
                 yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
+            await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
@@ -266,6 +297,7 @@ class ConversationService:
                     return
                 yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
+            await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
             if action == "approve" and confirmation is not None:
                 await self._confirmations.mark_succeeded(confirmation)

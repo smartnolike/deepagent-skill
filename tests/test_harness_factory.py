@@ -11,6 +11,7 @@ from agent.agent_factory import (
     _harness_profile_key,
     _response_language_system_prompt,
     _skill_bound_system_prompt,
+    _workspace_system_prompt,
     create_agent_service,
 )
 from agent.middleware.response_language_middleware import response_language_instruction
@@ -136,3 +137,23 @@ def test_response_language_prompts_do_not_follow_skill_document_language() -> No
     assert "Use English" in response_language_instruction("en")
     assert "Use Chinese" in response_language_instruction("zh-CN")
     assert "Skill files" in response_language_instruction("en")
+
+
+def test_gke_workspace_prompt_leaves_artifact_downloads_to_the_client() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "dev",
+            "database": {"host": "x", "name": "x", "user": "x"},
+            "api_auth_token": "x",
+            "mcp_servers": {},
+            "sandbox": {
+                "provider": "gke_backend",
+                "gke": {"namespace": "agent-sandbox", "sandbox_claim_name": "deepagent-assistant", "router_url": "http://router"},
+            },
+        }
+    )
+
+    prompt = _workspace_system_prompt(settings)
+
+    assert "do not output Markdown download links" in prompt
+    assert "artifact_created event" in prompt

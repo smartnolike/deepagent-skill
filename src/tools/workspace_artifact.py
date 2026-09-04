@@ -31,6 +31,10 @@ def create_publish_artifact_tool(
         staff_id = configurable.get("staff_id")
         if not isinstance(staff_id, str):
             raise RuntimeError("publish_artifact requires a staff ID")
+        agent_run_id = configurable.get("agent_run_id")
+        if not isinstance(agent_run_id, str):
+            raise RuntimeError("publish_artifact requires an agent run")
+        run_id = uuid.UUID(agent_run_id)
         async with session_factory() as session:
             content = await asyncio.to_thread(workspace_service.read_artifact, staff_id, conversation_id, path)
             if len(content) > _MAX_ARTIFACT_BYTES:
@@ -41,6 +45,7 @@ def create_publish_artifact_tool(
             artifact = await SandboxArtifactRepository(session).create(
                 SandboxArtifact(
                     conversation_id=conversation_id,
+                    agent_run_id=run_id,
                     sandbox_path=path,
                     filename=download_name[:255],
                     content_type=mimetypes.guess_type(path)[0] or "application/octet-stream",

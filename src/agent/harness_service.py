@@ -85,7 +85,13 @@ class DeepAgentHarnessService:
         """Build one LangGraph config with optional per-run Langfuse callback metadata."""
         # GKE's shared Sandbox maps this server-validated staff ID and thread
         # ID to /workspace/staff-workspaces/{staff_id}/{conversation_id}.
-        config: dict[str, object] = {"configurable": {"thread_id": str(conversation_id), "staff_id": staff_id}}
+        config: dict[str, object] = {
+            "configurable": {
+                "thread_id": str(conversation_id),
+                "staff_id": staff_id,
+                "agent_run_id": str(agent_run_id),
+            }
+        }
         if self._observability is not None:
             config["callbacks"] = [self._observability.create_callback()]
             config["metadata"] = {

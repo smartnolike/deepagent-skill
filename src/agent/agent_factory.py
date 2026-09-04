@@ -166,7 +166,9 @@ def _workspace_system_prompt(settings: Settings) -> str:
     return (
         "All file and command tools share this conversation's persistent workspace. Keep reusable intermediate files "
         "under /work and final user-facing files under /output. After verifying a final file, call publish_artifact "
-        "with its /output path so the application can present an authenticated download."
+        "with its /output path so the application can present an authenticated download. After publish_artifact succeeds, "
+        "do not output Markdown download links, sandbox: URLs, file paths, or download URLs. State only that the file is "
+        "ready and give its filename as plain text; the client renders the download card from the artifact_created event."
     )
 
 

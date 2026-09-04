@@ -2,6 +2,14 @@
 
 # 覆盖鉴权、会话隔离、分页、SSE 工单链路和长期记忆隔离。
 
+import asyncio
+import uuid
+
+from database.models.agent.agent_run import AgentRun
+from database.models.agent.message import Message
+from database.models.agent.sandbox_artifact import SandboxArtifact
+from repositories.sandbox_artifact_repository import SandboxArtifactRepository
+
 
 def test_auth_and_conversation_lifecycle(client) -> None:
     assert client.get("/health").json() == {"status": "ok"}
@@ -143,3 +151,40 @@ def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monk
         json={"staff_id": "staff-a", "action": "approve"},
     )
     assert '"code": "AGENT_ERROR"' in repeated.text
+
+
+def test_history_restores_artifacts_on_the_assistant_message_that_published_them(client) -> None:
+    headers = {"Authorization": "Bearer test-token"}
+    conversation_id = uuid.UUID(client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"])
+
+    async def seed_artifact() -> tuple[uuid.UUID, uuid.UUID]:
+        async with client.app.state.session_factory() as session:
+            user = Message(conversation_id=conversation_id, role="user", content="Generate a report")
+            session.add(user)
+            await session.flush()
+            run = AgentRun(conversation_id=conversation_id, user_message_id=user.id, status="completed")
+            assistant = Message(conversation_id=conversation_id, role="assistant", content="Report is ready: report.xlsx")
+            session.add_all([run, assistant])
+            await session.flush()
+            artifact = SandboxArtifact(
+                conversation_id=conversation_id,
+                agent_run_id=run.id,
+                sandbox_path="/workspace/output/report.xlsx",
+                filename="report.xlsx",
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                size_bytes=42,
+                expires_at=None,
+            )
+            session.add(artifact)
+            await session.commit()
+            await SandboxArtifactRepository(session).attach_to_assistant_message(run.id, assistant.id)
+            return assistant.id, artifact.id
+
+    assistant_id, artifact_id = asyncio.run(seed_artifact())
+    history = client.get(f"/agent/api/conversations/{conversation_id}/messages?staff_id=staff-a", headers=headers)
+
+    assert history.status_code == 200
+    messages = history.json()
+    assistant = next(item for item in messages if item["id"] == str(assistant_id))
+    assert assistant["artifacts"] == [{"artifact_id": str(artifact_id), "filename": "report.xlsx", "size_bytes": 42}]
+    assert next(item for item in messages if item["role"] == "user")["artifacts"] == []

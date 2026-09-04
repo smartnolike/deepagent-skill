@@ -17,6 +17,12 @@ class SandboxArtifact(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("ai_agent_conversation.id", ondelete="CASCADE"), index=True
     )
+    agent_run_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_agent_agent_run.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    assistant_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("ai_agent_message.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     sandbox_path: Mapped[str] = mapped_column(String(1024))
     filename: Mapped[str] = mapped_column(String(255))
     content_type: Mapped[str] = mapped_column(String(100))

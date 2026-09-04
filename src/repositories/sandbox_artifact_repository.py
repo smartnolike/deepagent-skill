@@ -2,7 +2,7 @@
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models.agent.sandbox_artifact import SandboxArtifact
@@ -32,3 +32,15 @@ class SandboxArtifactRepository:
             .order_by(SandboxArtifact.created_at.asc())
         )
         return list(result)
+
+    async def attach_to_assistant_message(self, agent_run_id: uuid.UUID, assistant_message_id: uuid.UUID) -> None:
+        """Bind every Artifact published by one completed run to its visible reply."""
+        await self._session.execute(
+            update(SandboxArtifact)
+            .where(
+                SandboxArtifact.agent_run_id == agent_run_id,
+                SandboxArtifact.assistant_message_id.is_(None),
+            )
+            .values(assistant_message_id=assistant_message_id)
+        )
+        await self._session.commit()
