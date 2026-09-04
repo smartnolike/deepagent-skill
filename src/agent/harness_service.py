@@ -108,24 +108,23 @@ class DeepAgentHarnessService:
                     if artifact is not None:
                         yield "artifact_created", artifact
                     continue
-                if not isinstance(message, AIMessage):
-                    if isinstance(message, ToolMessage) and message.name in self._frontend_diagnostic_tools:
-                        yield "tool_result", _tool_result_payload(
-                            message.name,
-                            active_tools.get(message.name, {}),
-                            message.content,
-                            self._frontend_diagnostic_tools[message.name],
-                        )
-                    continue
-                for tool_call in message.tool_calls:
-                    tool_name = tool_call["name"]
-                    active_tools[tool_name] = _redact_tool_value(tool_call.get("args", {}))
-                    logger.info("agent_tool_requested tool_name=%s", tool_name)
-                    if tool_name != "get_skill_memory":
-                        yield "tool_start", {"name": tool_name}
-                text = message.text if isinstance(message.text, str) else ""
-                if text:
-                    yield "token", {"content": text}
+                if isinstance(message, AIMessage):
+                    for tool_call in message.tool_calls:
+                        tool_name = tool_call["name"]
+                        active_tools[tool_name] = _redact_tool_value(tool_call.get("args", {}))
+                        logger.info("agent_tool_requested tool_name=%s", tool_name)
+                        if tool_name != "get_skill_memory":
+                            yield "tool_start", {"name": tool_name}
+                    text = message.text if isinstance(message.text, str) else ""
+                    if text:
+                        yield "token", {"content": text}
+                elif isinstance(message, ToolMessage) and message.name in self._frontend_diagnostic_tools:
+                    yield "tool_result", _tool_result_payload(
+                        message.name,
+                        active_tools.get(message.name, {}),
+                        message.content,
+                        self._frontend_diagnostic_tools[message.name],
+                    )
             elif mode == "updates" and isinstance(value, dict) and "__interrupt__" in value:
                 for interrupt in value["__interrupt__"]:
                     request = getattr(interrupt, "value", interrupt)
