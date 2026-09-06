@@ -113,6 +113,8 @@ class DeepAgentHarnessService:
                     artifact = _artifact_payload(message.content)
                     if artifact is not None:
                         yield "artifact_created", artifact
+                    if message.name != "get_skill_memory":
+                        yield "tool_end", {"name": message.name}
                     continue
                 if isinstance(message, AIMessage):
                     for tool_call in message.tool_calls:
@@ -131,6 +133,8 @@ class DeepAgentHarnessService:
                         message.content,
                         self._frontend_diagnostic_tools[message.name],
                     )
+                if isinstance(message, ToolMessage) and message.name != "get_skill_memory":
+                    yield "tool_end", {"name": message.name}
             elif mode == "updates" and isinstance(value, dict) and "__interrupt__" in value:
                 for interrupt in value["__interrupt__"]:
                     request = getattr(interrupt, "value", interrupt)
