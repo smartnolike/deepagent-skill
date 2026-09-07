@@ -107,6 +107,28 @@ async def test_hidden_tool_does_not_emit_lifecycle_events() -> None:
     assert [event async for event in harness._stream_graph({}, {}, {})] == []
 
 
+class _GraphWithBlankToolNames:
+    async def astream(self, *_args: object, **_kwargs: object):
+        yield "messages", (
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {"name": "", "args": {}, "id": "call-empty"},
+                    {"name": "   ", "args": {}, "id": "call-whitespace"},
+                ],
+            ),
+            {},
+        )
+        yield "messages", (ToolMessage("result", name="", tool_call_id="call-empty"), {})
+        yield "messages", (ToolMessage("result", name="   ", tool_call_id="call-whitespace"), {})
+
+
+async def test_blank_tool_names_do_not_emit_sse_lifecycle_events() -> None:
+    harness = DeepAgentHarnessService(_GraphWithBlankToolNames())
+
+    assert [event async for event in harness._stream_graph({}, {}, {})] == []
+
+
 class _GraphWithArtifactToolResult:
     async def astream(self, *_args: object, **_kwargs: object):
         yield "messages", (

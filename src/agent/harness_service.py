@@ -112,7 +112,10 @@ class DeepAgentHarnessService:
                 message, metadata = value
                 if isinstance(message, AIMessage):
                     for tool_call in message.tool_calls:
-                        tool_name = tool_call["name"]
+                        tool_name = _tool_name(tool_call.get("name"))
+                        if tool_name is None:
+                            logger.warning("agent_tool_ignored_missing_name")
+                            continue
                         tool_call_id = _tool_call_id(tool_call)
                         active_tools[tool_call_id] = _redact_tool_value(tool_call.get("args", {}))
                         pending_tool_call_ids.setdefault(tool_name, []).append(tool_call_id)
@@ -123,8 +126,11 @@ class DeepAgentHarnessService:
                     if text:
                         yield "token", {"content": text}
                 elif isinstance(message, ToolMessage):
-                    tool_name = message.name
-                    tool_call_id = _completed_tool_call_id(message, pending_tool_call_ids)
+                    tool_name = _tool_name(message.name)
+                    if tool_name is None:
+                        logger.warning("agent_tool_result_ignored_missing_name")
+                        continue
+                    tool_call_id = _completed_tool_call_id(message, tool_name, pending_tool_call_ids)
                     if tool_name == "publish_artifact":
                         artifact = _artifact_payload(message.content)
                         if artifact is not None:
@@ -186,9 +192,21 @@ def _tool_call_id(tool_call: dict[str, object]) -> str:
     return str(call_id) if call_id else str(uuid.uuid4())
 
 
-def _completed_tool_call_id(message: ToolMessage, pending_tool_call_ids: dict[str, list[str]]) -> str | None:
+def _tool_name(value: object) -> str | None:
+    """Normalize a tool name, suppressing malformed calls from the public SSE protocol."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip()
+    return normalized or None
+
+
+def _completed_tool_call_id(
+    message: ToolMessage,
+    tool_name: str,
+    pending_tool_call_ids: dict[str, list[str]],
+) -> str | None:
     """Match a ToolMessage to its start event, including providers that omit call IDs."""
-    pending_ids = pending_tool_call_ids.get(message.name, [])
+    pending_ids = pending_tool_call_ids.get(tool_name, [])
     call_id = message.tool_call_id
     if call_id and call_id in pending_ids:
         pending_ids.remove(call_id)
