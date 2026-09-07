@@ -49,6 +49,26 @@ def test_message_stream_uses_test_agent_injected_at_application_boundary(client)
     assert "Test agent response." in response.text
 
 
+def test_message_stream_exposes_matched_tool_lifecycle_events(client, monkeypatch) -> None:
+    headers = {"Authorization": "Bearer test-token"}
+    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
+
+    async def tool_reply(*_):
+        yield "tool_start", {"name": "lookup", "tool_call_id": "call-1"}
+        yield "tool_end", {"name": "lookup", "tool_call_id": "call-1"}
+
+    monkeypatch.setattr(client.app.state.agent_service, "reply", tool_reply)
+    response = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "Look this up"},
+    )
+
+    assert "event: tool_start" in response.text
+    assert "event: tool_end" in response.text
+    assert response.text.count('"tool_call_id": "call-1"') == 2
+
+
 def test_list_conversations_is_paginated(client) -> None:
     headers = {"Authorization": "Bearer test-token"}
     for title in ("one", "two", "three"):

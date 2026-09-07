@@ -106,35 +106,39 @@ class DeepAgentHarnessService:
     async def _stream_graph(self, input_value: object, config: dict, context: dict) -> AsyncIterator[tuple[str, dict[str, object]]]:
         """将普通消息和 LangGraph HITL interrupt 统一转换为 API SSE 事件。"""
         active_tools: dict[str, dict[str, object]] = {}
+        pending_tool_call_ids: dict[str, list[str]] = {}
         async for mode, value in self._graph.astream(input_value, config=config, context=context, stream_mode=["messages", "updates"]):
             if mode == "messages":
                 message, metadata = value
-                if isinstance(message, ToolMessage) and message.name == "publish_artifact":
-                    artifact = _artifact_payload(message.content)
-                    if artifact is not None:
-                        yield "artifact_created", artifact
-                    if message.name != "get_skill_memory":
-                        yield "tool_end", {"name": message.name}
-                    continue
                 if isinstance(message, AIMessage):
                     for tool_call in message.tool_calls:
                         tool_name = tool_call["name"]
-                        active_tools[tool_name] = _redact_tool_value(tool_call.get("args", {}))
+                        tool_call_id = _tool_call_id(tool_call)
+                        active_tools[tool_call_id] = _redact_tool_value(tool_call.get("args", {}))
+                        pending_tool_call_ids.setdefault(tool_name, []).append(tool_call_id)
                         logger.info("agent_tool_requested tool_name=%s", tool_name)
                         if tool_name != "get_skill_memory":
-                            yield "tool_start", {"name": tool_name}
+                            yield "tool_start", _tool_event_payload(tool_name, tool_call_id)
                     text = message.text if isinstance(message.text, str) else ""
                     if text:
                         yield "token", {"content": text}
-                elif isinstance(message, ToolMessage) and message.name in self._frontend_diagnostic_tools:
-                    yield "tool_result", _tool_result_payload(
-                        message.name,
-                        active_tools.get(message.name, {}),
-                        message.content,
-                        self._frontend_diagnostic_tools[message.name],
-                    )
-                if isinstance(message, ToolMessage) and message.name != "get_skill_memory":
-                    yield "tool_end", {"name": message.name}
+                elif isinstance(message, ToolMessage):
+                    tool_name = message.name
+                    tool_call_id = _completed_tool_call_id(message, pending_tool_call_ids)
+                    if tool_name == "publish_artifact":
+                        artifact = _artifact_payload(message.content)
+                        if artifact is not None:
+                            yield "artifact_created", artifact
+                    elif tool_name in self._frontend_diagnostic_tools:
+                        yield "tool_result", _tool_result_payload(
+                            tool_name,
+                            active_tools.get(tool_call_id, {}),
+                            message.content,
+                            self._frontend_diagnostic_tools[tool_name],
+                            tool_call_id,
+                        )
+                    if tool_name != "get_skill_memory":
+                        yield "tool_end", _tool_event_payload(tool_name, tool_call_id)
             elif mode == "updates" and isinstance(value, dict) and "__interrupt__" in value:
                 for interrupt in value["__interrupt__"]:
                     request = getattr(interrupt, "value", interrupt)
@@ -176,6 +180,32 @@ def _artifact_payload(content: object) -> dict[str, object] | None:
     }
 
 
+def _tool_call_id(tool_call: dict[str, object]) -> str:
+    """Return the LangChain call ID, creating a stream-local fallback when absent."""
+    call_id = tool_call.get("id")
+    return str(call_id) if call_id else str(uuid.uuid4())
+
+
+def _completed_tool_call_id(message: ToolMessage, pending_tool_call_ids: dict[str, list[str]]) -> str | None:
+    """Match a ToolMessage to its start event, including providers that omit call IDs."""
+    pending_ids = pending_tool_call_ids.get(message.name, [])
+    call_id = message.tool_call_id
+    if call_id and call_id in pending_ids:
+        pending_ids.remove(call_id)
+        return call_id
+    if pending_ids:
+        return pending_ids.pop(0)
+    return call_id
+
+
+def _tool_event_payload(tool_name: str, tool_call_id: str | None) -> dict[str, object]:
+    """Build a compatible tool lifecycle payload with an optional precise call ID."""
+    payload: dict[str, object] = {"name": tool_name}
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
+    return payload
+
+
 _SENSITIVE_KEY_PARTS = frozenset({"password", "secret", "token", "authorization", "credential", "api_key"})
 
 
@@ -193,7 +223,13 @@ def _redact_tool_value(value: object, key: str = "") -> object:
     return str(value)
 
 
-def _tool_result_payload(tool_name: str, arguments: object, content: object, expose_result: bool) -> dict[str, object]:
+def _tool_result_payload(
+    tool_name: str,
+    arguments: object,
+    content: object,
+    expose_result: bool,
+    tool_call_id: str | None = None,
+) -> dict[str, object]:
     """Build a frontend diagnostic record from a completed ToolMessage."""
     parsed_result: object = content
     source = "tool_message_text"
@@ -219,6 +255,8 @@ def _tool_result_payload(tool_name: str, arguments: object, content: object, exp
         "source": source,
         "summary": summary,
     }
+    if tool_call_id:
+        payload["tool_call_id"] = tool_call_id
     if expose_result:
         payload["result"] = sanitized_result
     return payload

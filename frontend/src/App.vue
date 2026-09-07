@@ -194,8 +194,10 @@ async function submitForm(): Promise<void> {
 
 function handleEvent(event: StreamEvent, assistant: ChatMessage): void {
   if (event.type === 'token') assistant.content += event.content
-  if (event.type === 'tool_start') upsertActivity(assistant, `tool:${event.name}`, `Calling ${event.name}`, 'running')
-  if (event.type === 'tool_end') completeLatestActivity(assistant)
+  if (event.type === 'tool_start') {
+    upsertActivity(assistant, toolActivityId(event.name, event.toolCallId), `Calling ${event.name}`, 'running')
+  }
+  if (event.type === 'tool_end') completeActivity(assistant, toolActivityId(event.name, event.toolCallId))
   if (event.type === 'confirmation_required') {
     completeLatestActivity(assistant)
     upsertActivity(assistant, `confirmation:${event.confirmation.toolName}`, 'Waiting for your confirmation', 'waiting')
@@ -258,6 +260,15 @@ function upsertActivity(
 function completeLatestActivity(assistant: ChatMessage): void {
   const latest = [...(assistant.activities || [])].reverse().find((activity) => activity.status === 'running')
   if (latest) latest.status = 'completed'
+}
+
+function completeActivity(assistant: ChatMessage, id: string): void {
+  const activity = assistant.activities?.find((item) => item.id === id)
+  if (activity?.status === 'running') activity.status = 'completed'
+}
+
+function toolActivityId(toolName: string, toolCallId?: string): string {
+  return `tool:${toolCallId || toolName}`
 }
 
 function markLatestActivityFailed(assistant: ChatMessage): void {

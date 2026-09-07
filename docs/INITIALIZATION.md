@@ -180,16 +180,16 @@ event: token
 data: {"content":"你"}
 
 event: tool_start
-data: {"name":"danaan__external_resource_add"}
+data: {"name":"danaan__external_resource_add","tool_call_id":"call-123"}
 
 event: tool_end
-data: {"name":"danaan__external_resource_add"}
+data: {"name":"danaan__external_resource_add","tool_call_id":"call-123"}
 
 event: done
 data: {...}
 ```
 
-至少支持 `token`、`tool_start`、`tool_end`、`done`、`error`。前端可拼接 token、展示工具执行状态并在 done 结束生成。
+至少支持 `token`、`tool_start`、`tool_end`、`done`、`error`。`tool_call_id` 是工具生命周期事件的可选关联字段；提供时，前端必须用它配对同名工具的开始与结束事件。前端可拼接 token、展示工具执行状态并在 done 结束生成。
 
 ## 11. 日志架构
 

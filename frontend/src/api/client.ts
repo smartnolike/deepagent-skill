@@ -54,8 +54,8 @@ export interface FormRequest {
 
 export type StreamEvent =
   | { type: 'token'; content: string }
-  | { type: 'tool_start'; name: string }
-  | { type: 'tool_end'; name: string }
+  | { type: 'tool_start'; name: string; toolCallId?: string }
+  | { type: 'tool_end'; name: string; toolCallId?: string }
   | { type: 'confirmation_required'; confirmation: ConfirmationRequest }
   | { type: 'form_required'; form: FormRequest }
   | { type: 'artifact_created'; artifact: Artifact }
@@ -197,8 +197,12 @@ function parseEvent(block: string, onEvent: (event: StreamEvent) => void): void 
   if (!event || !text) return
   const data = JSON.parse(text) as Record<string, unknown>
   if (event === 'token') onEvent({ type: 'token', content: String(data.content || '') })
-  if (event === 'tool_start') onEvent({ type: 'tool_start', name: String(data.name || 'tool') })
-  if (event === 'tool_end') onEvent({ type: 'tool_end', name: String(data.name || 'tool') })
+  if (event === 'tool_start') onEvent({
+    type: 'tool_start', name: String(data.name || 'tool'), toolCallId: stringValue(data.tool_call_id),
+  })
+  if (event === 'tool_end') onEvent({
+    type: 'tool_end', name: String(data.name || 'tool'), toolCallId: stringValue(data.tool_call_id),
+  })
   if (event === 'confirmation_required') {
     onEvent({ type: 'confirmation_required', confirmation: toConfirmationRequest(data) })
   }
@@ -223,6 +227,10 @@ function parseEvent(block: string, onEvent: (event: StreamEvent) => void): void 
   }
   if (event === 'done') onEvent({ type: 'done' })
   if (event === 'error') onEvent({ type: 'error', message: String(data.message || 'Agent execution failed') })
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value ? value : undefined
 }
 
 function toConfirmationRequest(data: Record<string, unknown>): ConfirmationRequest {

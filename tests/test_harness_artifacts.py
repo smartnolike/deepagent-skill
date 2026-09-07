@@ -42,8 +42,8 @@ async def test_completed_tool_emits_tool_end_after_tool_start() -> None:
     events = [event async for event in harness._stream_graph({}, {}, {})]
 
     assert events == [
-        ("tool_start", {"name": "lookup"}),
-        ("tool_end", {"name": "lookup"}),
+        ("tool_start", {"name": "lookup", "tool_call_id": "call-1"}),
+        ("tool_end", {"name": "lookup", "tool_call_id": "call-1"}),
     ]
 
 
@@ -59,3 +59,80 @@ async def test_diagnostic_tool_emits_result_then_tool_end() -> None:
     events = [event async for event in harness._stream_graph({}, {}, {})]
 
     assert [event for event, _payload in events] == ["tool_start", "tool_result", "tool_end"]
+    assert events[1][1]["tool_call_id"] == "call-1"
+    assert events[2][1]["tool_call_id"] == "call-1"
+
+
+class _GraphWithRepeatedToolCalls:
+    async def astream(self, *_args: object, **_kwargs: object):
+        yield "messages", (
+            AIMessage(content="", tool_calls=[
+                {"name": "lookup", "args": {"query": "first"}, "id": "call-1"},
+                {"name": "lookup", "args": {"query": "second"}, "id": "call-2"},
+            ]),
+            {},
+        )
+        yield "messages", (ToolMessage("second", name="lookup", tool_call_id="call-2"), {})
+        yield "messages", (ToolMessage("first", name="lookup", tool_call_id="call-1"), {})
+
+
+async def test_repeated_tool_calls_are_completed_by_tool_call_id() -> None:
+    harness = DeepAgentHarnessService(_GraphWithRepeatedToolCalls())
+
+    events = [event async for event in harness._stream_graph({}, {}, {})]
+
+    assert events == [
+        ("tool_start", {"name": "lookup", "tool_call_id": "call-1"}),
+        ("tool_start", {"name": "lookup", "tool_call_id": "call-2"}),
+        ("tool_end", {"name": "lookup", "tool_call_id": "call-2"}),
+        ("tool_end", {"name": "lookup", "tool_call_id": "call-1"}),
+    ]
+
+
+class _GraphWithHiddenTool:
+    async def astream(self, *_args: object, **_kwargs: object):
+        yield "messages", (
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "get_skill_memory", "args": {}, "id": "call-1"}],
+            ),
+            {},
+        )
+        yield "messages", (ToolMessage("result", name="get_skill_memory", tool_call_id="call-1"), {})
+
+
+async def test_hidden_tool_does_not_emit_lifecycle_events() -> None:
+    harness = DeepAgentHarnessService(_GraphWithHiddenTool())
+
+    assert [event async for event in harness._stream_graph({}, {}, {})] == []
+
+
+class _GraphWithArtifactToolResult:
+    async def astream(self, *_args: object, **_kwargs: object):
+        yield "messages", (
+            AIMessage(
+                content="",
+                tool_calls=[{"name": "publish_artifact", "args": {}, "id": "call-1"}],
+            ),
+            {},
+        )
+        yield "messages", (
+            ToolMessage(
+                '{"artifact_id":"artifact-1","filename":"report.xlsx","size_bytes":42}',
+                name="publish_artifact",
+                tool_call_id="call-1",
+            ),
+            {},
+        )
+
+
+async def test_artifact_tool_emits_artifact_then_tool_end() -> None:
+    harness = DeepAgentHarnessService(_GraphWithArtifactToolResult())
+
+    events = [event async for event in harness._stream_graph({}, {}, {})]
+
+    assert events == [
+        ("tool_start", {"name": "publish_artifact", "tool_call_id": "call-1"}),
+        ("artifact_created", {"artifact_id": "artifact-1", "filename": "report.xlsx", "size_bytes": 42}),
+        ("tool_end", {"name": "publish_artifact", "tool_call_id": "call-1"}),
+    ]
