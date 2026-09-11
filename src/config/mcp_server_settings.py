@@ -15,6 +15,7 @@ class McpCredentialHeaderSettings(BaseModel):
 
     source: Literal["translator_dsp", "gcp_secret_manager"]
     secret_version: str | None = None
+    prefix: str = ""
     refresh_on_reconnect: bool = False
 
     @model_validator(mode="after")

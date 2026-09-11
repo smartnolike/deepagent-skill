@@ -31,7 +31,7 @@ class McpHeaderResolver:
         for header_name, credential in server.credential_headers.items():
             if credential.source == "gcp_secret_manager":
                 assert credential.secret_version is not None  # validated by settings
-                headers[header_name] = self._runtime_secrets.require_mcp_secret(
+                headers[header_name] = credential.prefix + self._runtime_secrets.require_mcp_secret(
                     credential.secret_version
                 ).get_secret_value()
                 continue
@@ -42,5 +42,5 @@ class McpHeaderResolver:
                     raise RuntimeError("MCP DSP token provider is unavailable")
                 cached = await self._translator_token_provider.get_token()
                 self._dsp_headers[header_name] = cached
-            headers[header_name] = cached
+            headers[header_name] = credential.prefix + cached
         return headers

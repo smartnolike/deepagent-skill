@@ -34,6 +34,7 @@ def _settings(*, refresh_on_reconnect: bool = False) -> Settings:
                     "credential_headers": {
                         "X-DSP": {
                             "source": "translator_dsp",
+                            "prefix": "Bearer ",
                             "refresh_on_reconnect": refresh_on_reconnect,
                         },
                         "X-PAT": {
@@ -63,7 +64,7 @@ async def test_mcp_headers_cache_startup_secrets_and_dsp_by_default() -> None:
     initial = await resolver.resolve("confidence", reconnect=False)
     reconnected = await resolver.resolve("confidence", reconnect=True)
 
-    assert initial == {"X-Token-Type": "dsp", "X-DSP": "dsp-1", "X-PAT": "pat-value"}
+    assert initial == {"X-Token-Type": "dsp", "X-DSP": "Bearer dsp-1", "X-PAT": "pat-value"}
     assert reconnected == initial
     assert provider.calls == 1
 
@@ -83,7 +84,7 @@ async def test_mcp_headers_refresh_only_opted_in_dsp_on_reconnect() -> None:
     initial = await resolver.resolve("confidence", reconnect=False)
     reconnected = await resolver.resolve("confidence", reconnect=True)
 
-    assert initial["X-DSP"] == "dsp-1"
-    assert reconnected["X-DSP"] == "dsp-2"
+    assert initial["X-DSP"] == "Bearer dsp-1"
+    assert reconnected["X-DSP"] == "Bearer dsp-2"
     assert initial["X-PAT"] == reconnected["X-PAT"] == "pat-value"
     assert provider.calls == 2

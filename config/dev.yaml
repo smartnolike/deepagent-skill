@@ -76,6 +76,7 @@ mcp_servers:
     credential_headers:
       X-HSBC-GAIP-MCPGATEWAY-ID-TOKEN:
         source: translator_dsp
+        prefix: "Bearer "
         refresh_on_reconnect: true
       X-HSBC-GAIP-MCPGATEWAY-CONFLUENCE-PAT-TOKEN:
         source: gcp_secret_manager
