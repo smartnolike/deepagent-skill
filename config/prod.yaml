@@ -64,3 +64,21 @@ mcp_servers:
       external_resource_add:
         body.creatorName: ""
         body.creatorEmail: ""
+  confluence:
+    enabled: true
+    transport: http
+    url: ${CONFLUENCE_MCP_URL}
+    root_ca_path: ${CONFLUENCE_MCP_ROOT_CA_PATH:-build/hsbc_root.cer}
+    headers:
+      X-HSBC-GAIP-MCPGATEWAY-ID-TOKEN-TYPE: dsp
+    credential_headers:
+      X-HSBC-GAIP-MCPGATEWAY-ID-TOKEN:
+        source: translator_dsp
+        refresh_on_reconnect: true
+      X-HSBC-GAIP-MCPGATEWAY-CONFLUENCE-PAT-TOKEN:
+        source: gcp_secret_manager
+        secret_version: ${CONFLUENCE_PAT_SECRET_VERSION}
+    timeout_seconds: 120
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [confluence_get_page]
