@@ -13,10 +13,12 @@ class RuntimeSecrets:
         translator_service_account_password: SecretStr | None = None,
         langfuse_public_key: SecretStr | None = None,
         langfuse_secret_key: SecretStr | None = None,
+        mcp_secrets: dict[str, SecretStr] | None = None,
     ) -> None:
         self._translator_service_account_password = translator_service_account_password
         self._langfuse_public_key = langfuse_public_key
         self._langfuse_secret_key = langfuse_secret_key
+        self._mcp_secrets = dict(mcp_secrets or {})
 
     def require_translator_service_account_password(self) -> SecretStr:
         """Return the injected translator password or fail without revealing secret material."""
@@ -35,3 +37,10 @@ class RuntimeSecrets:
         if self._langfuse_secret_key is None:
             raise RuntimeError("LANGFUSE_SECRET_KEY_UNAVAILABLE")
         return self._langfuse_secret_key
+
+    def require_mcp_secret(self, secret_version: str) -> SecretStr:
+        """Return a startup-resolved MCP secret without exposing its value."""
+        secret = self._mcp_secrets.get(secret_version)
+        if secret is None:
+            raise RuntimeError("MCP_SECRET_UNAVAILABLE")
+        return secret

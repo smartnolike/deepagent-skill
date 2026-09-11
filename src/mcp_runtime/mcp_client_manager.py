@@ -12,6 +12,7 @@ import httpx
 
 from config.settings import Settings
 from mcp_runtime.mcp_client import McpClient
+from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 from mcp_runtime.tool_definition import McpToolDefinition
 
 _RECONNECTABLE_ERRORS = (ConnectionError, TimeoutError, OSError, httpx.HTTPError)
@@ -21,8 +22,9 @@ logger = logging.getLogger(__name__)
 class McpClientManager:
     """Own MCP sessions, validate startup Tool contracts, and reconnect failed sessions once."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, header_resolver: McpHeaderResolver | None = None) -> None:
         self._settings = settings
+        self._header_resolver = header_resolver
         self._clients: dict[str, McpClient] = {}
         self._locks: dict[str, asyncio.Lock] = {}
         self._tool_definitions: dict[str, tuple[McpToolDefinition, ...]] = {}
@@ -199,7 +201,7 @@ class McpClientManager:
     async def _connect_and_discover(self, server_id: str, *, startup: bool) -> None:
         """Connect one server, discover schemas, and retain the startup Tool contract."""
         started = time.perf_counter()
-        client = self._create_client(server_id)
+        client = await self._create_client(server_id, reconnect=not startup)
         try:
             await client.connect()
             definitions = tuple(await client.list_tools())
@@ -246,11 +248,16 @@ class McpClientManager:
             },
         )
 
-    def _create_client(self, server_id: str) -> McpClient:
+    async def _create_client(self, server_id: str, *, reconnect: bool) -> McpClient:
         """Create a transport-specific client without storing it before successful discovery."""
         server = self.server_settings[server_id]
         if server.transport == "http":
-            return McpClient(server)
+            if self._header_resolver is None:
+                if server.credential_headers:
+                    raise RuntimeError("MCP credential header resolver is unavailable")
+                return McpClient(server)
+            headers = await self._header_resolver.resolve(server_id, reconnect=reconnect)
+            return McpClient(server, headers=headers)
         raise RuntimeError(f"Unsupported MCP transport: {server.transport}")
 
     def _allowlisted_definitions(

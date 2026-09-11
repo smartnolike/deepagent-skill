@@ -24,7 +24,11 @@ class FakeGoogleSecretManager:
         self.closed = True
 
 
-def _settings(token_auth: dict[str, str], langfuse: dict[str, object] | None = None) -> Settings:
+def _settings(
+    token_auth: dict[str, str],
+    langfuse: dict[str, object] | None = None,
+    mcp_servers: dict[str, object] | None = None,
+) -> Settings:
     """构造最小内部模型配置。"""
     return Settings.model_validate(
         {
@@ -32,7 +36,7 @@ def _settings(token_auth: dict[str, str], langfuse: dict[str, object] | None = N
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
             "api_auth_token": "x",
-            "mcp_servers": {},
+            "mcp_servers": mcp_servers or {},
             "agent": {"base_url": "https://model.example/v1", "token_auth": token_auth},
             "langfuse": langfuse or {},
         }
@@ -105,4 +109,36 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
     assert runtime_secrets.require_langfuse_public_key().get_secret_value() == "resolved-password"
     assert runtime_secrets.require_langfuse_secret_key().get_secret_value() == "resolved-password"
     assert manager.accessed == [public_version, secret_version]
+    assert manager.closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MCP PATs are read only during startup and retained in RuntimeSecrets."""
+    manager = FakeGoogleSecretManager()
+    monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
+    pat_version = "projects/example/secrets/confidence-pat/versions/1"
+
+    runtime_secrets = await startup_secrets.resolve_runtime_secrets(
+        _settings(
+            {
+                "translator_url": "https://translator.example/token",
+                "service_account_name": "svc",
+                "service_account_password": "local-password",
+            },
+            mcp_servers={
+                "confidence": {
+                    "transport": "http",
+                    "url": "https://mcp.example.internal/api",
+                    "credential_headers": {
+                        "X-PAT": {"source": "gcp_secret_manager", "secret_version": pat_version}
+                    },
+                    "tools": ["search"],
+                }
+            },
+        )
+    )
+
+    assert runtime_secrets.require_mcp_secret(pat_version).get_secret_value() == "resolved-password"
+    assert manager.accessed == [pat_version]
     assert manager.closed is True

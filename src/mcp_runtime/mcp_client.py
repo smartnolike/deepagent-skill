@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 class McpClient:
     """Long-lived MCP SDK session for one Streamable HTTP MCP server."""
 
-    def __init__(self, settings: McpServerSettings) -> None:
+    def __init__(self, settings: McpServerSettings, headers: dict[str, str] | None = None) -> None:
         self._settings = settings
+        self._headers = headers if headers is not None else settings.headers
         self._stack = AsyncExitStack()
         self._session: ClientSession | None = None
 
@@ -36,7 +37,7 @@ class McpClient:
         # 将 client 纳入同一个 ExitStack，重连和应用关闭时会一并释放连接池。
         http_client = await self._stack.enter_async_context(
             httpx.AsyncClient(
-                headers=self._settings.headers,
+                headers=self._headers,
                 timeout=self._settings.timeout_seconds,
                 verify=self._tls_verification_context(),
                 trust_env=False,

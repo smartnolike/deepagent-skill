@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from agent.agent_factory import create_agent_service
+from agent.translator_token_provider import TranslatorTokenProvider
 from agent.checkpointer import create_checkpointer_context
 from api.router import router
 from config.load_settings import load_settings
@@ -31,6 +32,7 @@ from core.request_context import request_id_var
 from core.startup_secrets import resolve_runtime_secrets
 from database.engine import create_engine
 from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
 from sandbox.workspace_cleanup import gke_workspace_cleanup_loop
@@ -48,6 +50,19 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         runtime_settings = configured_settings or load_settings()
         configure_logging(runtime_settings)
         app.state.runtime_secrets = await resolve_runtime_secrets(runtime_settings)
+        app.state.httpx_client = None
+        app.state.translator_token_provider = None
+        if runtime_settings.tools.danaan_json_schema_url is not None or runtime_settings.agent.token_auth is not None:
+            app.state.httpx_client = HttpxClient(runtime_settings.tools.root_ca_path)
+            logger.info("httpx_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
+        if runtime_settings.agent.token_auth is not None:
+            if app.state.httpx_client is None:
+                raise RuntimeError("HTTP client is required for translator token authentication")
+            app.state.translator_token_provider = TranslatorTokenProvider(
+                runtime_settings.agent.token_auth,
+                app.state.runtime_secrets.require_translator_service_account_password(),
+                app.state.httpx_client,
+            )
         app.state.langfuse_observability = None
         if runtime_settings.langfuse.enabled:
             app.state.langfuse_observability = LangfuseObservability(
@@ -61,12 +76,15 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         app.state.ready = False
         app.state.engine = engine
         app.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
-        app.state.mcp_manager = McpClientManager(runtime_settings)
+        app.state.mcp_manager = McpClientManager(
+            runtime_settings,
+            McpHeaderResolver(
+                runtime_settings,
+                app.state.runtime_secrets,
+                app.state.translator_token_provider,
+            ),
+        )
         await app.state.mcp_manager.start()
-        app.state.httpx_client = None
-        if runtime_settings.tools.danaan_json_schema_url is not None or runtime_settings.agent.token_auth is not None:
-            app.state.httpx_client = HttpxClient(runtime_settings.tools.root_ca_path)
-            logger.info("httpx_client_initialized root_ca_path=%s", runtime_settings.tools.root_ca_path)
         logger.info("application_resources_initializing env=%s", runtime_settings.agent_env)
         if database_url is None:
             async with create_checkpointer_context(runtime_settings) as checkpointer:
@@ -86,6 +104,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                         app.state.httpx_client,
                         checkpointer,
                         app.state.session_factory,
+                        app.state.translator_token_provider,
                     )
                     app.state.workspace_cleanup_task = None
                     workspace_service = getattr(app.state.agent_service, "gke_workspace_service", None)
@@ -120,6 +139,7 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
                 app.state.langfuse_observability,
                 app.state.httpx_client,
                 session_factory=app.state.session_factory,
+                translator_token_provider=app.state.translator_token_provider,
             )
             app.state.workspace_cleanup_task = None
             workspace_service = getattr(app.state.agent_service, "gke_workspace_service", None)

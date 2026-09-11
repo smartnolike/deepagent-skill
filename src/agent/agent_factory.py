@@ -19,6 +19,7 @@ from agent.agent_context import AgentContext
 from agent.harness_service import DeepAgentHarnessService
 from agent.middleware.response_language_middleware import ResponseLanguageMiddleware
 from agent.model_factory import create_chat_model
+from agent.translator_token_provider import TranslatorTokenProvider
 from common.httpx_client import HttpxClient
 from config.settings import Settings
 from core.runtime_secrets import RuntimeSecrets
@@ -40,6 +41,7 @@ def create_agent_service(
     httpx_client: HttpxClient | None = None,
     checkpointer=None,
     session_factory: async_sessionmaker[AsyncSession] | None = None,
+    translator_token_provider: TranslatorTokenProvider | None = None,
 ) -> DeepAgentHarnessService:
     """创建配置的单根 DeepAgent。"""
     if settings.agent.model is None:
@@ -83,7 +85,7 @@ def create_agent_service(
         "middleware": [ResponseLanguageMiddleware()],
         "name": "danaan-ai-assistant",
     }
-    model = create_chat_model(settings.agent, httpx_client, runtime_secrets)
+    model = create_chat_model(settings.agent, httpx_client, runtime_secrets, translator_token_provider)
     graph = create_deep_agent(
         model=model,
         backend=backend,

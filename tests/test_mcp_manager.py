@@ -15,8 +15,9 @@ class FakeMcpClient:
 
     instances: list["FakeMcpClient"] = []
 
-    def __init__(self, settings) -> None:
+    def __init__(self, settings, headers: dict[str, str] | None = None) -> None:
         self.settings = settings
+        self.headers = headers
         self.connect_calls = 0
         self.list_tools_calls = 0
         self.close_calls = 0

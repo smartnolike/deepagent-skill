@@ -10,6 +10,22 @@ from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+class McpCredentialHeaderSettings(BaseModel):
+    """Describe a sensitive MCP header without putting its value in YAML."""
+
+    source: Literal["translator_dsp", "gcp_secret_manager"]
+    secret_version: str | None = None
+    refresh_on_reconnect: bool = False
+
+    @model_validator(mode="after")
+    def validate_source(self) -> "McpCredentialHeaderSettings":
+        if self.source == "gcp_secret_manager" and not self.secret_version:
+            raise ValueError("gcp_secret_manager credential headers require secret_version")
+        if self.source == "translator_dsp" and self.secret_version is not None:
+            raise ValueError("translator_dsp credential headers must not define secret_version")
+        return self
+
+
 class McpServerSettings(BaseModel):
     """Connection and tool allowlist for one MCP server."""
 
@@ -17,6 +33,7 @@ class McpServerSettings(BaseModel):
     transport: Literal["http"] = "http"
     url: HttpUrl | None = None
     headers: dict[str, str] = Field(default_factory=dict)
+    credential_headers: dict[str, McpCredentialHeaderSettings] = Field(default_factory=dict)
     root_ca_path: Path | None = None
     timeout_seconds: float = 15.0
     reconnect_initial_delay_seconds: float = 1.0
