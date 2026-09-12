@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 from config.settings import Settings
 from mcp_runtime import mcp_client_manager as manager_module
-from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.mcp_client_manager import McpClientManager, _result_log_preview
 from mcp_runtime.tool_definition import McpToolDefinition
 from mcp_runtime.tool_registry import McpToolRegistry
 
@@ -79,6 +79,13 @@ class FakeMcpClient:
 
     def update_headers(self, headers: dict[str, str]) -> None:
         self.header_updates.append(headers)
+
+
+def test_result_log_preview_is_limited_to_300_characters() -> None:
+    preview = _result_log_preview({"content": "x" * 400})
+
+    assert len(preview) == 300
+    assert preview.endswith("...")
 
 
 def _settings(

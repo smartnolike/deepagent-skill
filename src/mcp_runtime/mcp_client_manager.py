@@ -3,6 +3,7 @@
 # 启动时从 MCP Server 获取真实 inputSchema；运行期只重连 Session，不动态改变 Agent 的 Tool 契约。
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Sequence
@@ -16,7 +17,16 @@ from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 from mcp_runtime.tool_definition import McpToolDefinition
 
 _RECONNECTABLE_ERRORS = (ConnectionError, TimeoutError, OSError, httpx.HTTPError)
+_RESULT_LOG_MAX_CHARS = 300
 logger = logging.getLogger(__name__)
+
+
+def _result_log_preview(result: dict[str, Any]) -> str:
+    """Serialize a Tool result for logs without allowing large payloads to flood them."""
+    serialized = json.dumps(result, ensure_ascii=False, default=str, separators=(",", ":"))
+    if len(serialized) <= _RESULT_LOG_MAX_CHARS:
+        return serialized
+    return f"{serialized[: _RESULT_LOG_MAX_CHARS - 3]}..."
 
 
 class McpClientManager:
@@ -157,7 +167,7 @@ class McpClientManager:
                 "fields": {
                     "server_id": server_id,
                     "tool_name": tool_name,
-                    "result": result,
+                    "result": _result_log_preview(result),
                     "duration_ms": int((time.perf_counter() - started) * 1000),
                 }
             },
