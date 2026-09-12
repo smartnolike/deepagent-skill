@@ -102,7 +102,7 @@ class McpClientManager:
             raise RuntimeError("MCP_UNAVAILABLE") from exc
         await self._refresh_dsp_headers(server_id, client)
         try:
-            result = await client.call_tool(tool_name, arguments)
+            result = await self._call_tool_with_timeout(server_id, client, tool_name, arguments)
         except _RECONNECTABLE_ERRORS as exc:
             logger.exception(
                 "mcp_tool_connection_failed_reconnecting",
@@ -117,7 +117,12 @@ class McpClientManager:
             )
             try:
                 await self._reconnect(server_id, client)
-                result = await self._client_for(server_id).call_tool(tool_name, arguments)
+                result = await self._call_tool_with_timeout(
+                    server_id,
+                    self._client_for(server_id),
+                    tool_name,
+                    arguments,
+                )
             except Exception as retry_exc:
                 logger.exception(
                     "mcp_tool_retry_failed",
@@ -276,6 +281,18 @@ class McpClientManager:
             return
         headers = await self._header_resolver.resolve(server_id, reconnect=False, refresh_dsp=True)
         client.update_headers(headers)
+
+    async def _call_tool_with_timeout(
+        self,
+        server_id: str,
+        client: McpClient,
+        tool_name: str,
+        arguments: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Bound one Tool invocation without applying that timeout to the SSE read stream."""
+        timeout_seconds = self.server_settings[server_id].timeout_seconds
+        async with asyncio.timeout(timeout_seconds):
+            return await client.call_tool(tool_name, arguments)
 
     def _allowlisted_definitions(
         self, server_id: str, definitions: Sequence[McpToolDefinition]

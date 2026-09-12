@@ -46,6 +46,17 @@ def test_mcp_client_rejects_missing_configured_root_ca(tmp_path) -> None:
         client._tls_verification_context()
 
 
+def test_mcp_client_disables_read_timeout_for_streamable_http() -> None:
+    client = McpClient(McpServerSettings(timeout_seconds=120))
+
+    timeout = client._http_timeout()
+
+    assert timeout.connect == 10
+    assert timeout.read is None
+    assert timeout.write == 120
+    assert timeout.pool == 10
+
+
 @pytest.mark.asyncio
 async def test_mcp_client_updates_headers_for_subsequent_requests() -> None:
     client = McpClient(McpServerSettings())

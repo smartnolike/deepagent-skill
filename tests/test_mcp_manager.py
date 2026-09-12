@@ -1,6 +1,7 @@
 """MCP startup discovery and reconnect tests."""
 
 import pytest
+import asyncio
 from types import SimpleNamespace
 
 from config.settings import Settings
@@ -14,6 +15,7 @@ class FakeMcpClient:
     """HTTP MCP test double with one real-shaped Tool schema per Session."""
 
     instances: list["FakeMcpClient"] = []
+    call_delay_seconds = 0.0
 
     def __init__(self, settings, headers: dict[str, str] | None = None) -> None:
         self.settings = settings
@@ -65,6 +67,8 @@ class FakeMcpClient:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
         self.tool_calls.append((tool_name, arguments))
+        if self.call_delay_seconds:
+            await asyncio.sleep(self.call_delay_seconds)
         if self.fail_next_tool_call:
             self.fail_next_tool_call = False
             raise ConnectionError("expired MCP session")
@@ -83,6 +87,7 @@ def _settings(
     context_argument_bindings: dict[str, dict[str, str]] | None = None,
     fixed_arguments: dict[str, dict[str, str]] | None = None,
     translator_dsp: bool = False,
+    timeout_seconds: float = 15.0,
 ) -> Settings:
     """Create minimal settings with one enabled HTTP MCP server."""
     return Settings.model_validate(
@@ -95,6 +100,7 @@ def _settings(
                 "knowledge": {
                     "transport": "http",
                     "url": "https://mcp.example.internal/api",
+                    "timeout_seconds": timeout_seconds,
                     "credential_headers": (
                         {
                             "X-DSP": {
@@ -197,6 +203,25 @@ async def test_tool_call_refreshes_only_configured_dsp_headers(monkeypatch: pyte
     assert resolver.calls == [("knowledge", False, False), ("knowledge", False, True)]
     assert client.header_updates == [{"X-DSP": "Bearer dsp-2"}]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_timeout_reconnects_and_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow Tool request is bounded independently from the long-lived SSE stream."""
+    FakeMcpClient.instances.clear()
+    FakeMcpClient.call_delay_seconds = 0.03
+    monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+    manager = McpClientManager(_settings(timeout_seconds=0.01))
+    await manager.start()
+    FakeMcpClient.instances[0].fail_next_tool_call = False
+
+    with pytest.raises(RuntimeError, match="MCP_UNAVAILABLE"):
+        await manager.call_tool("knowledge__search", {"query": "test"})
+
+    assert len(FakeMcpClient.instances) == 2
+    assert FakeMcpClient.instances[0].close_calls == 1
+    await manager.close()
+    FakeMcpClient.call_delay_seconds = 0.0
 
 
 @pytest.mark.asyncio

@@ -34,12 +34,13 @@ class McpClient:
         """Open and initialize a Streamable HTTP MCP session with configured headers."""
         if self._settings.url is None:
             raise ValueError("HTTP MCP server requires url")
-        # 新版 MCP SDK 通过调用方提供的 httpx client 接收 headers 和 timeout。
+        # Streamable HTTP 会维持长期 SSE 读流，因此不能使用业务调用超时作为
+        # read timeout。单次 Tool 调用的总时限由 McpClientManager 管理。
         # 将 client 纳入同一个 ExitStack，重连和应用关闭时会一并释放连接池。
         http_client = await self._stack.enter_async_context(
             httpx.AsyncClient(
                 headers=self._headers,
-                timeout=self._settings.timeout_seconds,
+                timeout=self._http_timeout(),
                 verify=self._tls_verification_context(),
                 trust_env=False,
             )
@@ -53,6 +54,16 @@ class McpClient:
         )
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
+
+    def _http_timeout(self) -> httpx.Timeout:
+        """Use bounded connection operations but allow the SSE read stream to stay idle."""
+        request_timeout = self._settings.timeout_seconds
+        return httpx.Timeout(
+            connect=min(10.0, request_timeout),
+            read=None,
+            write=request_timeout,
+            pool=min(10.0, request_timeout),
+        )
 
     def update_headers(self, headers: dict[str, str]) -> None:
         """Apply refreshed credentials to subsequent MCP HTTP requests.
