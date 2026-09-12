@@ -100,6 +100,7 @@ class McpClientManager:
                 },
             )
             raise RuntimeError("MCP_UNAVAILABLE") from exc
+        await self._refresh_dsp_headers(server_id, client)
         try:
             result = await client.call_tool(tool_name, arguments)
         except _RECONNECTABLE_ERRORS as exc:
@@ -259,6 +260,22 @@ class McpClientManager:
             headers = await self._header_resolver.resolve(server_id, reconnect=reconnect)
             return McpClient(server, headers=headers)
         raise RuntimeError(f"Unsupported MCP transport: {server.transport}")
+
+    async def _refresh_dsp_headers(self, server_id: str, client: McpClient) -> None:
+        """Refresh only short-lived DSP headers before an MCP Tool request.
+
+        ``TranslatorTokenProvider.get_token`` uses its own expiry-aware cache, so
+        this does not fetch a new token for every Tool call.  It merely ensures a
+        newly issued token is applied to the next HTTP request without replacing
+        a healthy MCP session.
+        """
+        if self._header_resolver is None:
+            return
+        server = self.server_settings[server_id]
+        if not any(credential.source == "translator_dsp" for credential in server.credential_headers.values()):
+            return
+        headers = await self._header_resolver.resolve(server_id, reconnect=False, refresh_dsp=True)
+        client.update_headers(headers)
 
     def _allowlisted_definitions(
         self, server_id: str, definitions: Sequence[McpToolDefinition]

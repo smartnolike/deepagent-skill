@@ -44,3 +44,15 @@ def test_mcp_client_rejects_missing_configured_root_ca(tmp_path) -> None:
 
     with pytest.raises(RuntimeError, match="MCP root certificate is missing or empty"):
         client._tls_verification_context()
+
+
+@pytest.mark.asyncio
+async def test_mcp_client_updates_headers_for_subsequent_requests() -> None:
+    client = McpClient(McpServerSettings())
+    client._http_client = mcp_client_module.httpx.AsyncClient(headers={"X-DSP": "Bearer old", "X-PAT": "stable"})
+
+    client.update_headers({"X-DSP": "Bearer new", "X-PAT": "stable"})
+
+    assert client._http_client.headers["X-DSP"] == "Bearer new"
+    assert client._http_client.headers["X-PAT"] == "stable"
+    await client._http_client.aclose()

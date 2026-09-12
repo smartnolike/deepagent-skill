@@ -24,8 +24,8 @@ class McpHeaderResolver:
         self._translator_token_provider = translator_token_provider
         self._dsp_headers: dict[str, str] = {}
 
-    async def resolve(self, server_id: str, *, reconnect: bool) -> dict[str, str]:
-        """Return static and credential headers for a new MCP connection."""
+    async def resolve(self, server_id: str, *, reconnect: bool, refresh_dsp: bool = False) -> dict[str, str]:
+        """Return MCP headers, refreshing short-lived DSP credentials when requested."""
         server = self._settings.mcp_servers[server_id]
         headers = dict(server.headers)
         for header_name, credential in server.credential_headers.items():
@@ -37,7 +37,7 @@ class McpHeaderResolver:
                 continue
 
             cached = self._dsp_headers.get(header_name)
-            if cached is None or (reconnect and credential.refresh_on_reconnect):
+            if cached is None or refresh_dsp or (reconnect and credential.refresh_on_reconnect):
                 if self._translator_token_provider is None:
                     raise RuntimeError("MCP DSP token provider is unavailable")
                 cached = await self._translator_token_provider.get_token()

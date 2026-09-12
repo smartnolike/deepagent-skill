@@ -22,6 +22,7 @@ class FakeMcpClient:
         self.list_tools_calls = 0
         self.close_calls = 0
         self.tool_calls: list[tuple[str, dict[str, object]]] = []
+        self.header_updates: list[dict[str, str]] = []
         self.fail_next_tool_call = len(self.instances) == 0
         self.instances.append(self)
 
@@ -72,12 +73,16 @@ class FakeMcpClient:
     async def close(self) -> None:
         self.close_calls += 1
 
+    def update_headers(self, headers: dict[str, str]) -> None:
+        self.header_updates.append(headers)
+
 
 def _settings(
     *,
     tools: list[str] | None = None,
     context_argument_bindings: dict[str, dict[str, str]] | None = None,
     fixed_arguments: dict[str, dict[str, str]] | None = None,
+    translator_dsp: bool = False,
 ) -> Settings:
     """Create minimal settings with one enabled HTTP MCP server."""
     return Settings.model_validate(
@@ -90,6 +95,16 @@ def _settings(
                 "knowledge": {
                     "transport": "http",
                     "url": "https://mcp.example.internal/api",
+                    "credential_headers": (
+                        {
+                            "X-DSP": {
+                                "source": "translator_dsp",
+                                "prefix": "Bearer ",
+                            }
+                        }
+                        if translator_dsp
+                        else {}
+                    ),
                     "tools": tools if tools is not None else ["search"],
                     "context_argument_bindings": context_argument_bindings or {},
                     "fixed_arguments": fixed_arguments or {},
@@ -154,6 +169,33 @@ async def test_connection_failure_reconnects_and_retries_once(monkeypatch: pytes
     assert first.close_calls == 1
     assert second.connect_calls == 1
     assert second.tool_calls == [("search", {"query": "test"})]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_refreshes_only_configured_dsp_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live client receives current DSP headers before its Tool request."""
+    FakeMcpClient.instances.clear()
+    monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+
+    class FakeHeaderResolver:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool, bool]] = []
+
+        async def resolve(self, server_id: str, *, reconnect: bool, refresh_dsp: bool = False) -> dict[str, str]:
+            self.calls.append((server_id, reconnect, refresh_dsp))
+            return {"X-DSP": f"Bearer dsp-{len(self.calls)}"}
+
+    resolver = FakeHeaderResolver()
+    manager = McpClientManager(_settings(translator_dsp=True), resolver)  # type: ignore[arg-type]
+    await manager.start()
+    client = FakeMcpClient.instances[0]
+    client.fail_next_tool_call = False
+
+    await manager.call_tool("knowledge__search", {"query": "test"})
+
+    assert resolver.calls == [("knowledge", False, False), ("knowledge", False, True)]
+    assert client.header_updates == [{"X-DSP": "Bearer dsp-2"}]
     await manager.close()
 
 

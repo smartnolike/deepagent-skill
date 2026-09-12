@@ -88,3 +88,24 @@ async def test_mcp_headers_refresh_only_opted_in_dsp_on_reconnect() -> None:
     assert reconnected["X-DSP"] == "Bearer dsp-2"
     assert initial["X-PAT"] == reconnected["X-PAT"] == "pat-value"
     assert provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_mcp_headers_refresh_dsp_for_tool_request_but_not_pat() -> None:
+    """A Tool request receives a current DSP header while reusing the PAT."""
+    provider = FakeTranslatorTokenProvider()
+    resolver = McpHeaderResolver(
+        _settings(),
+        RuntimeSecrets(
+            mcp_secrets={"projects/example/secrets/confidence-pat/versions/1": SecretStr("pat-value")}
+        ),
+        provider,  # type: ignore[arg-type]
+    )
+
+    initial = await resolver.resolve("confidence", reconnect=False)
+    refreshed = await resolver.resolve("confidence", reconnect=False, refresh_dsp=True)
+
+    assert initial["X-DSP"] == "Bearer dsp-1"
+    assert refreshed["X-DSP"] == "Bearer dsp-2"
+    assert refreshed["X-PAT"] == "pat-value"
+    assert provider.calls == 2

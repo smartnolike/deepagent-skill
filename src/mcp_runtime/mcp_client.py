@@ -27,6 +27,7 @@ class McpClient:
         self._settings = settings
         self._headers = headers if headers is not None else settings.headers
         self._stack = AsyncExitStack()
+        self._http_client: httpx.AsyncClient | None = None
         self._session: ClientSession | None = None
 
     async def connect(self) -> None:
@@ -43,6 +44,7 @@ class McpClient:
                 trust_env=False,
             )
         )
+        self._http_client = http_client
         read_stream, write_stream, _ = await self._stack.enter_async_context(
             streamable_http_client(
                 str(self._settings.url),
@@ -51,6 +53,16 @@ class McpClient:
         )
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
+
+    def update_headers(self, headers: dict[str, str]) -> None:
+        """Apply refreshed credentials to subsequent MCP HTTP requests.
+
+        Existing SSE response streams retain their original request headers.  This
+        intentionally updates only future requests such as ``tools/call``.
+        """
+        self._headers = dict(headers)
+        if self._http_client is not None:
+            self._http_client.headers.update(headers)
 
     def _tls_verification_context(self) -> ssl.SSLContext:
         """Use system trust roots plus the configured private root CA, when present."""
