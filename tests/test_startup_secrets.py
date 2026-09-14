@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from config.settings import Settings
 from core import startup_secrets
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET
 
 
 class FakeGoogleSecretManager:
@@ -18,7 +19,7 @@ class FakeGoogleSecretManager:
 
     async def access_secret(self, secret_version_name: str) -> SecretStr:
         self.accessed.append(secret_version_name)
-        return SecretStr("resolved-password")
+        return SecretStr(TEST_SECRET)
 
     async def close(self) -> None:
         self.closed = True
@@ -35,7 +36,7 @@ def _settings(
             "agent_env": "dev",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": mcp_servers or {},
             "agent": {"base_url": "https://model.example/v1", "token_auth": token_auth},
             "langfuse": langfuse or {},
@@ -60,7 +61,7 @@ async def test_startup_resolves_secret_manager_password_once(monkeypatch: pytest
         )
     )
 
-    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == "resolved-password"
+    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == TEST_SECRET
     assert manager.accessed == [secret_version]
     assert manager.closed is True
 
@@ -75,12 +76,12 @@ async def test_startup_uses_direct_local_password_without_secret_manager(monkeyp
             {
                 "translator_url": "https://translator.example/token",
                 "service_account_name": "svc",
-                "service_account_password": "local-password",
+                "service_account_password": TEST_PASSWORD,
             }
         )
     )
 
-    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == "local-password"
+    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == TEST_PASSWORD
 
 
 @pytest.mark.asyncio
@@ -96,7 +97,7 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
             {
                 "translator_url": "https://translator.example/token",
                 "service_account_name": "svc",
-                "service_account_password": "local-password",
+                "service_account_password": TEST_PASSWORD,
             },
             {
                 "enabled": True,
@@ -106,8 +107,8 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
         )
     )
 
-    assert runtime_secrets.require_langfuse_public_key().get_secret_value() == "resolved-password"
-    assert runtime_secrets.require_langfuse_secret_key().get_secret_value() == "resolved-password"
+    assert runtime_secrets.require_langfuse_public_key().get_secret_value() == TEST_SECRET
+    assert runtime_secrets.require_langfuse_secret_key().get_secret_value() == TEST_SECRET
     assert manager.accessed == [public_version, secret_version]
     assert manager.closed is True
 
@@ -124,7 +125,7 @@ async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.Mon
             {
                 "translator_url": "https://translator.example/token",
                 "service_account_name": "svc",
-                "service_account_password": "local-password",
+                "service_account_password": TEST_PASSWORD,
             },
             mcp_servers={
                 "confidence": {
@@ -139,6 +140,6 @@ async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.Mon
         )
     )
 
-    assert runtime_secrets.require_mcp_secret(pat_version).get_secret_value() == "resolved-password"
+    assert runtime_secrets.require_mcp_secret(pat_version).get_secret_value() == TEST_SECRET
     assert manager.accessed == [pat_version]
     assert manager.closed is True

@@ -5,6 +5,7 @@ from pydantic import SecretStr
 
 from config.settings import Settings
 from core.runtime_secrets import RuntimeSecrets
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD
 from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 
 
@@ -24,8 +25,8 @@ def _settings(*, refresh_on_reconnect: bool = False) -> Settings:
         {
             "agent_env": "local",
             "allow_test_doubles": True,
-            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
-            "api_auth_token": "test-token",
+            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {
                 "confidence": {
                     "transport": "http",

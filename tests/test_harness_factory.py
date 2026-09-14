@@ -19,14 +19,15 @@ from config.settings import Settings
 from mcp_runtime.mcp_client_manager import McpClientManager
 from services.memory_service import MemoryService
 from langgraph.store.memory import InMemoryStore
+from test_values import TEST_API_KEY, TEST_AUTH_TOKEN, TEST_PASSWORD
 
 
 def test_factory_requires_a_configured_model() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
         }
     )
@@ -38,9 +39,9 @@ def test_factory_accepts_fixed_gke_backend() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "agent": {"provider": "openai", "model": "gpt-4.1-mini", "api_key": "test"},
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "agent": {"provider": "openai", "model": "gpt-4.1-mini", "api_key": TEST_API_KEY},
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "sandbox": {
                 "provider": "gke_backend",
@@ -70,8 +71,8 @@ def test_filesystem_hides_execute() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "sandbox": {"provider": "filesystem"},
         }
@@ -86,7 +87,7 @@ def test_gke_backend_exposes_confirmed_execute() -> None:
         {
             "agent_env": "dev",
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "sandbox": {
                 "provider": "gke_backend",
@@ -107,8 +108,8 @@ def test_gke_tunnel_settings_validate_without_creating_a_backend() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "sandbox": {
                 "provider": "gke_backend",
@@ -144,7 +145,7 @@ def test_gke_workspace_prompt_leaves_artifact_downloads_to_the_client() -> None:
         {
             "agent_env": "dev",
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "sandbox": {
                 "provider": "gke_backend",

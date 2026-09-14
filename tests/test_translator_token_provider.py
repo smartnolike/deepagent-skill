@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from agent.translator_token_provider import TranslatorTokenProvider
 from config.token_auth_settings import TokenAuthSettings
+from test_values import TEST_PASSWORD
 
 
 class FakeTokenHttpxClient:
@@ -34,10 +35,10 @@ async def test_provider_reuses_short_lived_token_before_refresh_window() -> None
         TokenAuthSettings(
             translator_url="https://translator.example/token",
             service_account_name="svc",
-            service_account_password="secret",
+            service_account_password=TEST_PASSWORD,
             refresh_before_expiry_seconds=5,
         ),
-        SecretStr("secret"),
+        SecretStr(TEST_PASSWORD),
         client,  # type: ignore[arg-type]
     )
 
@@ -49,7 +50,7 @@ async def test_provider_reuses_short_lived_token_before_refresh_window() -> None
             "input_token_state": {
                 "token_type": "CREDENTIAL",
                 "username": "svc",
-                "password": "secret",
+                "password": TEST_PASSWORD,
             },
             "output_token_state": {"token_type": "JWT"},
         }
@@ -63,9 +64,9 @@ async def test_provider_raises_safe_error_for_invalid_response() -> None:
         TokenAuthSettings(
             translator_url="https://translator.example/token",
             service_account_name="svc",
-            service_account_password="secret",
+            service_account_password=TEST_PASSWORD,
         ),
-        SecretStr("secret"),
+        SecretStr(TEST_PASSWORD),
         client,  # type: ignore[arg-type]
     )
 
@@ -79,7 +80,7 @@ def test_provider_requires_refresh_window_shorter_than_documented_ttl() -> None:
         TokenAuthSettings(
             translator_url="https://translator.example/token",
             service_account_name="svc",
-            service_account_password="secret",
+            service_account_password=TEST_PASSWORD,
             token_ttl_seconds=30,
             refresh_before_expiry_seconds=30,
         )

@@ -9,12 +9,13 @@ from database.models.agent.agent_run import AgentRun
 from database.models.agent.message import Message
 from database.models.agent.sandbox_artifact import SandboxArtifact
 from repositories.sandbox_artifact_repository import SandboxArtifactRepository
+from test_values import TEST_AUTH_TOKEN
 
 
 def test_auth_and_conversation_lifecycle(client) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.post("/agent/api/conversations", json={"staff_id": "staff-a"}).status_code == 401
-    headers = {"Authorization": "Bearer test-token", "X-Request-ID": "request-1"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}", "X-Request-ID": "request-1"}
     created = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"})
     assert created.status_code == 200
     assert created.headers["X-Request-ID"] == "request-1"
@@ -39,7 +40,7 @@ def test_auth_and_conversation_lifecycle(client) -> None:
 
 
 def test_message_stream_uses_test_agent_injected_at_application_boundary(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
     response = client.post(
         f"/agent/api/conversations/{conversation_id}/messages",
@@ -50,7 +51,7 @@ def test_message_stream_uses_test_agent_injected_at_application_boundary(client)
 
 
 def test_message_stream_exposes_matched_tool_lifecycle_events(client, monkeypatch) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def tool_reply(*_):
@@ -70,7 +71,7 @@ def test_message_stream_exposes_matched_tool_lifecycle_events(client, monkeypatc
 
 
 def test_list_conversations_is_paginated(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     for title in ("one", "two", "three"):
         client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a", "title": title})
     page = client.get("/agent/api/conversations?staff_id=staff-a&page=2&page_size=2", headers=headers)
@@ -82,7 +83,7 @@ def test_list_conversations_is_paginated(client) -> None:
 
 
 def test_explicit_memories_are_staff_isolated(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     created = client.put(
         "/agent/api/memories/default-region",
         headers=headers,
@@ -98,7 +99,7 @@ def test_explicit_memories_are_staff_isolated(client) -> None:
 
 def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None:
     """流已经开始后发生异常也必须返回可与后端日志关联的 error_id。"""
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def failing_reply(*_):
@@ -120,7 +121,7 @@ def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None
 
 def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monkeypatch) -> None:
     """A page reload can restore the approval card and a second click cannot resume the Tool again."""
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def confirmation_reply(*_):
@@ -174,7 +175,7 @@ def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monk
 
 
 def test_history_restores_artifacts_on_the_assistant_message_that_published_them(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = uuid.UUID(client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"])
 
     async def seed_artifact() -> tuple[uuid.UUID, uuid.UUID]:

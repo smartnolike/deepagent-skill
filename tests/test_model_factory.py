@@ -8,15 +8,16 @@ from types import SimpleNamespace
 from agent import model_factory
 from agent.model_factory import create_chat_model
 from config.agent_settings import AgentSettings
+from test_values import TEST_API_KEY
 
 
 def test_openai_provider_uses_fixed_api_key() -> None:
     model = create_chat_model(
-        AgentSettings(provider="openai", model="gpt-4.1-mini", api_key="test-fixed-key"), None
+        AgentSettings(provider="openai", model="gpt-4.1-mini", api_key=TEST_API_KEY), None
     )
 
     assert model.model_name == "gpt-4.1-mini"
-    assert model.openai_api_key.get_secret_value() == "test-fixed-key"
+    assert model.openai_api_key.get_secret_value() == TEST_API_KEY
 
 
 def test_openai_provider_requires_fixed_api_key() -> None:
@@ -30,7 +31,7 @@ def test_openai_compatible_provider_uses_custom_base_url() -> None:
             provider="openai_compatible",
             model="deepseek-v4-flash",
             base_url="https://api.deepseek.com",
-            api_key="deepseek-test-key",
+            api_key=TEST_API_KEY,
         ),
         None,
     )
@@ -58,7 +59,7 @@ def test_openai_compatible_provider_passes_application_http_client(monkeypatch: 
             provider="openai_compatible",
             model="compatible-model",
             base_url="https://model.example/v1",
-            api_key="test-key",
+            api_key=TEST_API_KEY,
         ),
         SimpleNamespace(async_client=expected_async_client),  # type: ignore[arg-type]
     )
