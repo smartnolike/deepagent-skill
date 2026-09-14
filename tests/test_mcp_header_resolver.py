@@ -5,7 +5,7 @@ from pydantic import SecretStr
 
 from config.settings import Settings
 from core.runtime_secrets import RuntimeSecrets
-from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET, TEST_SECRET_REFERENCE
 from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 
 
@@ -40,7 +40,7 @@ def _settings(*, refresh_on_reconnect: bool = False) -> Settings:
                         },
                         "X-PAT": {
                             "source": "gcp_secret_manager",
-                            "secret_version": "projects/example/secrets/confidence-pat/versions/1",
+                            "secret_version": TEST_SECRET_REFERENCE,
                         },
                     },
                     "tools": ["search"],
@@ -57,7 +57,7 @@ async def test_mcp_headers_cache_startup_secrets_and_dsp_by_default() -> None:
     resolver = McpHeaderResolver(
         _settings(),
         RuntimeSecrets(
-            mcp_secrets={"projects/example/secrets/confidence-pat/versions/1": SecretStr("pat-value")}
+            mcp_secrets={TEST_SECRET_REFERENCE: SecretStr(TEST_SECRET)}
         ),
         provider,  # type: ignore[arg-type]
     )
@@ -65,7 +65,7 @@ async def test_mcp_headers_cache_startup_secrets_and_dsp_by_default() -> None:
     initial = await resolver.resolve("confidence", reconnect=False)
     reconnected = await resolver.resolve("confidence", reconnect=True)
 
-    assert initial == {"X-Token-Type": "dsp", "X-DSP": "Bearer dsp-1", "X-PAT": "pat-value"}
+    assert initial == {"X-Token-Type": "dsp", "X-DSP": "Bearer dsp-1", "X-PAT": TEST_SECRET}
     assert reconnected == initial
     assert provider.calls == 1
 
@@ -77,7 +77,7 @@ async def test_mcp_headers_refresh_only_opted_in_dsp_on_reconnect() -> None:
     resolver = McpHeaderResolver(
         _settings(refresh_on_reconnect=True),
         RuntimeSecrets(
-            mcp_secrets={"projects/example/secrets/confidence-pat/versions/1": SecretStr("pat-value")}
+            mcp_secrets={TEST_SECRET_REFERENCE: SecretStr(TEST_SECRET)}
         ),
         provider,  # type: ignore[arg-type]
     )
@@ -87,7 +87,7 @@ async def test_mcp_headers_refresh_only_opted_in_dsp_on_reconnect() -> None:
 
     assert initial["X-DSP"] == "Bearer dsp-1"
     assert reconnected["X-DSP"] == "Bearer dsp-2"
-    assert initial["X-PAT"] == reconnected["X-PAT"] == "pat-value"
+    assert initial["X-PAT"] == reconnected["X-PAT"] == TEST_SECRET
     assert provider.calls == 2
 
 
@@ -98,7 +98,7 @@ async def test_mcp_headers_refresh_dsp_for_tool_request_but_not_pat() -> None:
     resolver = McpHeaderResolver(
         _settings(),
         RuntimeSecrets(
-            mcp_secrets={"projects/example/secrets/confidence-pat/versions/1": SecretStr("pat-value")}
+            mcp_secrets={TEST_SECRET_REFERENCE: SecretStr(TEST_SECRET)}
         ),
         provider,  # type: ignore[arg-type]
     )
@@ -108,5 +108,5 @@ async def test_mcp_headers_refresh_dsp_for_tool_request_but_not_pat() -> None:
 
     assert initial["X-DSP"] == "Bearer dsp-1"
     assert refreshed["X-DSP"] == "Bearer dsp-2"
-    assert refreshed["X-PAT"] == "pat-value"
+    assert refreshed["X-PAT"] == TEST_SECRET
     assert provider.calls == 2

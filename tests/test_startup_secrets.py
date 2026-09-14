@@ -7,7 +7,7 @@ from pydantic import SecretStr
 
 from config.settings import Settings
 from core import startup_secrets
-from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET, new_test_secret_reference
 
 
 class FakeGoogleSecretManager:
@@ -49,7 +49,7 @@ async def test_startup_resolves_secret_manager_password_once(monkeypatch: pytest
     """Secret reference 在启动期读取一次并注入内存。"""
     manager = FakeGoogleSecretManager()
     monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
-    secret_version = "projects/example/secrets/model-password/versions/3"
+    secret_version = new_test_secret_reference()
 
     runtime_secrets = await startup_secrets.resolve_runtime_secrets(
         _settings(
@@ -89,8 +89,8 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
     """dev/prod Langfuse Key 只在启动期读取并保留在 RuntimeSecrets。"""
     manager = FakeGoogleSecretManager()
     monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
-    public_version = "projects/example/secrets/langfuse-public/versions/1"
-    secret_version = "projects/example/secrets/langfuse-secret/versions/1"
+    public_version = new_test_secret_reference()
+    secret_version = new_test_secret_reference()
 
     runtime_secrets = await startup_secrets.resolve_runtime_secrets(
         _settings(
@@ -118,7 +118,7 @@ async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.Mon
     """MCP PATs are read only during startup and retained in RuntimeSecrets."""
     manager = FakeGoogleSecretManager()
     monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
-    pat_version = "projects/example/secrets/confidence-pat/versions/1"
+    pat_version = new_test_secret_reference()
 
     runtime_secrets = await startup_secrets.resolve_runtime_secrets(
         _settings(
