@@ -143,3 +143,34 @@ async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.Mon
     assert runtime_secrets.require_mcp_secret(pat_version).get_secret_value() == TEST_SECRET
     assert manager.accessed == [pat_version]
     assert manager.closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_skips_secrets_for_disabled_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disabled MCPs must not access Secret Manager during application startup."""
+    monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: pytest.fail("must not create manager"))
+    pat_version = "projects/example/secrets/disabled-mcp-pat/versions/1"
+
+    runtime_secrets = await startup_secrets.resolve_runtime_secrets(
+        _settings(
+            {
+                "translator_url": "https://translator.example/token",
+                "service_account_name": "svc",
+                "service_account_password": "local-password",
+            },
+            mcp_servers={
+                "disabled": {
+                    "enabled": False,
+                    "transport": "http",
+                    "url": "https://mcp.example.internal/api",
+                    "credential_headers": {
+                        "X-PAT": {"source": "gcp_secret_manager", "secret_version": pat_version}
+                    },
+                    "tools": ["search"],
+                }
+            },
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="MCP_SECRET_UNAVAILABLE"):
+        runtime_secrets.require_mcp_secret(pat_version)

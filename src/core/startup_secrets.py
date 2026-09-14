@@ -22,6 +22,7 @@ async def resolve_runtime_secrets(settings: Settings) -> RuntimeSecrets:
         dict.fromkeys(
             credential.secret_version
             for server in settings.mcp_servers.values()
+            if server.enabled
             for credential in server.credential_headers.values()
             if credential.source == "gcp_secret_manager" and credential.secret_version is not None
         )
