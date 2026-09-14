@@ -11,3 +11,4 @@ TEST_API_KEY = token_urlsafe(32)
 TEST_AUTH_TOKEN = token_urlsafe(32)
 TEST_PASSWORD = token_urlsafe(32)
 TEST_SECRET = token_urlsafe(32)
+TEST_SECRET_REFERENCE = f"projects/test-project/secrets/test-{token_urlsafe(16)}/versions/1"

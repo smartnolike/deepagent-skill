@@ -75,7 +75,7 @@ def test_callback_uses_only_the_cross_version_public_key_argument(monkeypatch) -
 
     monkeypatch.setattr(langfuse_observability, "CallbackHandler", callback_probe)
     observability = langfuse_observability.LangfuseObservability.__new__(langfuse_observability.LangfuseObservability)
-    observability._public_key = "pk"
+    observability._public_key = TEST_API_KEY
 
     assert observability.create_callback() == "callback"
-    assert captured == {"public_key": "pk"}
+    assert captured == {"public_key": TEST_API_KEY}

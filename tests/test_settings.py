@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from config.load_settings import load_settings
 from config.settings import Settings
-from test_values import TEST_API_KEY, TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET
+from test_values import TEST_API_KEY, TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET, TEST_SECRET_REFERENCE
 
 
 def test_local_requires_password() -> None:
@@ -203,8 +203,8 @@ def test_prod_langfuse_accepts_secret_manager_versions() -> None:
             "mcp_servers": {},
             "langfuse": {
                 "enabled": True,
-                "public_key_secret": "projects/example/secrets/langfuse-public/versions/1",
-                "secret_key_secret": "projects/example/secrets/langfuse-secret/versions/1",
+                "public_key_secret": TEST_SECRET_REFERENCE,
+                "secret_key_secret": TEST_SECRET_REFERENCE,
             },
         }
     )
@@ -245,7 +245,7 @@ def test_dynamic_token_auth_accepts_secret_manager_reference() -> None:
                 "token_auth": {
                     "translator_url": "https://translator.example/token",
                     "service_account_name": "svc",
-                    "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                    "service_account_password_secret": TEST_SECRET_REFERENCE,
                 },
             },
         }
@@ -270,7 +270,7 @@ def test_dynamic_token_auth_rejects_multiple_password_sources() -> None:
                         "translator_url": "https://translator.example/token",
                         "service_account_name": "svc",
                         "service_account_password": TEST_PASSWORD,
-                        "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                        "service_account_password_secret": TEST_SECRET_REFERENCE,
                     },
                 },
             }
