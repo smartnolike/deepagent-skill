@@ -2,7 +2,7 @@
 #
 # Build example:
 #   docker buildx build \
-#     --build-arg BASE_IMAGE=<gke-agent-sandbox-runtime-base> \
+#     --build-arg BASE_IMAGE=<gke-agent-sandbox-runtime-base@sha256:...> \
 #     --secret id=APT_AUTH,src=/path/to/apt-auth.conf \
 #     --secret id=PIP_CONFIG,src=/path/to/pip.conf \
 #     -f sandbox-runtime.Dockerfile .
@@ -14,7 +14,8 @@
 ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
-# BASE_IMAGE is the existing Agent Sandbox runtime-service image. It owns
+# BASE_IMAGE is the existing Agent Sandbox runtime-service image. Pin it to a
+# vendor-maintained digest which has passed the vulnerability scan. It owns
 # /app/main.py, its application environment, exposed port and entrypoint.
 # This file only layers Skill dependencies and the agent workspace onto it.
 
@@ -28,10 +29,15 @@ WORKDIR /app
 
 # The base image is expected to be Debian/Ubuntu compatible. APT_AUTH is an
 # optional BuildKit secret for authenticated internal APT repositories.
+# Bring packages inherited from BASE_IMAGE (notably libexpat1) to the newest
+# version published by the configured, security-enabled APT repo. A package
+# with no fixed version in that repo cannot be fixed here: the base image or
+# repository must be replaced in that case.
 RUN --mount=type=secret,id=APT_AUTH,target=/etc/apt/auth.conf,required=false \
     ln -snf "/usr/share/zoneinfo/${TZ}" /etc/localtime \
     && echo "${TZ}" > /etc/timezone \
     && apt-get update -yq \
+    && apt-get upgrade -yq \
     && apt-get install -yq --no-install-recommends \
         bash \
         ca-certificates \
@@ -68,6 +74,9 @@ COPY skill-packages /workspace/skill-packages
 # PIP_CONFIG can contain the internal index-url, extra-index-url and cert
 # settings. It is mounted only for this command and is never present in the
 # resulting image. A build without the secret uses pip's normal public index.
+# python3.X-venv installs distro pip/setuptools wheel archives only to seed the
+# venv. Once /opt/skill-venv has its own current pip, purge that build-time
+# package and its unused dependencies so they do not remain in the final image.
 RUN --mount=type=secret,id=PIP_CONFIG,target=/etc/pip.conf,required=false \
     ${PYTHON_BIN} -m venv /opt/skill-venv \
     && if [[ -s /opt/deepagent/certs/root.cer ]]; then export PIP_CERT=/opt/deepagent/certs/root.cer; fi \
@@ -78,6 +87,10 @@ RUN --mount=type=secret,id=PIP_CONFIG,target=/etc/pip.conf,required=false \
         echo "Installing Skill dependencies from ${requirements_file}"; \
         /opt/skill-venv/bin/python -m pip install --no-cache-dir -r "${requirements_file}"; \
     done \
+    && apt-get purge -yq python3.12-venv \
+    && apt-get autoremove -yq \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* \
     && rm -rf /root/.cache/pip
 
 # Skill packages are immutable. Conversation files are created lazily below
