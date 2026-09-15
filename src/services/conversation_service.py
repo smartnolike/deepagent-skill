@@ -4,23 +4,25 @@ from __future__ import annotations
 
 # 会话服务只协调持久化与 Agent 生命周期，Agent 推理期间不持有数据库事务。
 
-import uuid
-import logging
 import asyncio
+import logging
+import uuid
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 
 from fastapi import status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from agent.harness_service import DeepAgentHarnessService
-from common.language import ResponseLanguage
-from common.language import resolve_response_language
+from common.language import ResponseLanguage, resolve_response_language
 from core.errors import DomainError
 from database.models.agent.agent_run import AgentRun
 from database.models.agent.tool_confirmation import ToolConfirmation
 from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
+from repositories.conversation_workspace_repository import ConversationWorkspaceRepository
 from repositories.message_repository import MessageRepository
+from repositories.sandbox_artifact_repository import SandboxArtifactRepository
 from repositories.tool_confirmation_repository import ToolConfirmationRepository
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
@@ -35,9 +37,11 @@ class ConversationService:
     def __init__(
         self, session: AsyncSession, agent_service: DeepAgentHarnessService, memory_service: MemoryService
     ) -> None:
+        self._session = session
         self._conversations = ConversationRepository(session)
         self._messages = MessageRepository(session)
         self._runs = AgentRunRepository(session)
+        self._artifacts = SandboxArtifactRepository(session)
         self._confirmations = ToolConfirmationRepository(session)
         self._agent_service = agent_service
         self._memory_service = memory_service
@@ -75,16 +79,73 @@ class ConversationService:
 
     async def delete(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> None:
         conversation = await self._require_conversation(conversation_id, staff_id, response_language)
+        workspace_service = getattr(self._agent_service, "gke_workspace_service", None)
+        if workspace_service is not None:
+            try:
+                await asyncio.to_thread(workspace_service.delete_workspace, staff_id, conversation_id)
+            except Exception as exc:
+                logger.warning(
+                    "conversation_workspace_release_failed conversation_id=%s error_type=%s",
+                    conversation_id,
+                    type(exc).__name__,
+                )
         await self._conversations.delete(conversation)
         logger.info("conversation_deleted conversation_id=%s staff_id=%s", conversation_id, staff_id)
 
-    async def messages(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> list[dict[str, str]]:
+    async def messages(self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage) -> list[dict[str, object]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
         messages = await self._messages.list(conversation_id)
+        artifacts_by_message = self._artifacts_by_message(await self._artifacts.list(conversation_id))
         return [
-            {"id": str(item.id), "role": item.role, "content": item.content, "created_at": item.created_at.isoformat()}
+            {
+                "id": str(item.id),
+                "role": item.role,
+                "content": item.content,
+                "created_at": item.created_at.isoformat(),
+                "artifacts": artifacts_by_message.get(item.id, []),
+            }
             for item in messages
         ]
+
+    async def artifact(self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage):
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        artifact = await self._artifacts.get(artifact_id, conversation_id)
+        if artifact is None:
+            raise DomainError("ARTIFACT_NOT_FOUND", "Artifact not found", status.HTTP_404_NOT_FOUND)
+        return artifact
+
+    async def artifacts(
+        self, conversation_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
+    ) -> list[dict[str, object]]:
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        artifacts = await self._artifacts.list(conversation_id)
+        now = datetime.now(UTC)
+        return [
+            {
+                "id": str(item.id),
+                "assistant_message_id": str(item.assistant_message_id) if item.assistant_message_id else None,
+                "filename": item.filename,
+                "size_bytes": item.size_bytes,
+            }
+            for item in artifacts
+            if item.expires_at is None or item.expires_at > now
+        ]
+
+    async def download_artifact(
+        self, conversation_id: uuid.UUID, artifact_id: uuid.UUID, staff_id: str, response_language: ResponseLanguage
+    ) -> tuple[bytes, object]:
+        artifact = await self.artifact(conversation_id, artifact_id, staff_id, response_language)
+        if artifact.expires_at is not None and artifact.expires_at <= datetime.now(UTC):
+            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE)
+        workspace_service = getattr(self._agent_service, "gke_workspace_service", None)
+        if workspace_service is None:
+            raise DomainError("ARTIFACT_STORAGE_DISABLED", "Workspace artifacts are disabled", status.HTTP_503_SERVICE_UNAVAILABLE)
+        try:
+            content = await asyncio.to_thread(workspace_service.read_artifact, staff_id, conversation_id, artifact.sandbox_path)
+        except Exception as exc:
+            logger.info("workspace_artifact_unavailable artifact_id=%s error_type=%s", artifact_id, type(exc).__name__)
+            raise DomainError("ARTIFACT_EXPIRED", "Artifact has expired; generate it again", status.HTTP_410_GONE) from exc
+        return content, artifact
 
     async def tool_confirmations(
         self,
@@ -98,6 +159,23 @@ class ConversationService:
         confirmations = await self._confirmations.list(conversation_id, decision)
         return [self._confirmation_payload(item) for item in confirmations]
 
+    @staticmethod
+    def _artifacts_by_message(artifacts) -> dict[uuid.UUID, list[dict[str, object]]]:
+        """Group non-expired artifacts by the assistant reply that published them."""
+        now = datetime.now(UTC)
+        grouped: dict[uuid.UUID, list[dict[str, object]]] = {}
+        for artifact in artifacts:
+            if artifact.assistant_message_id is None or (artifact.expires_at is not None and artifact.expires_at <= now):
+                continue
+            grouped.setdefault(artifact.assistant_message_id, []).append(
+                {
+                    "artifact_id": str(artifact.id),
+                    "filename": artifact.filename,
+                    "size_bytes": artifact.size_bytes,
+                }
+            )
+        return grouped
+
     async def send(
         self, conversation_id: uuid.UUID, staff_id: str, content: str, response_language: ResponseLanguage
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
@@ -106,6 +184,8 @@ class ConversationService:
         previous_language = _language_from_history(previous_history)
         response_language = resolve_response_language(content, previous_language=previous_language)
         user_message = await self._messages.create(conversation_id, "user", content)
+        if getattr(self._agent_service, "gke_workspace_service", None) is not None:
+            await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
         run = await self._runs.create(conversation_id, user_message.id)
         logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
         history = await self._messages.list(conversation_id)
@@ -127,6 +207,7 @@ class ConversationService:
                     return
                 yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
+            await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
@@ -188,6 +269,8 @@ class ConversationService:
         if confirmation is not None:
             confirmation = await self._confirmations.decide(confirmation, staff_id, action)
         await self._runs.resume(run)
+        if getattr(self._agent_service, "gke_workspace_service", None) is not None:
+            await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
         if confirmation is not None:
             logger.info(
                 "tool_confirmation_decided confirmation_id=%s agent_run_id=%s action=%s",
@@ -214,6 +297,7 @@ class ConversationService:
                     return
                 yield event, payload
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
+            await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
             if action == "approve" and confirmation is not None:
                 await self._confirmations.mark_succeeded(confirmation)

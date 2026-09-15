@@ -12,6 +12,8 @@ from tools.danaan_template import get_danaan_resource_template
 from tools.skill_memory import create_get_skill_memory_tool
 from tools.user_form import request_user_form
 from services.memory_service import MemoryService
+from sandbox.gke_workspace_service import GkeWorkspaceService
+from tools.workspace_artifact import create_publish_artifact_tool
 
 
 class CustomToolRegistry:
@@ -23,24 +25,34 @@ class CustomToolRegistry:
         client: HttpxClient | None,
         session_factory: async_sessionmaker[AsyncSession] | None,
         memory_service: MemoryService,
+        gke_workspace_service: GkeWorkspaceService | None = None,
     ) -> None:
         self._settings = settings
         self._client = client
         self._session_factory = session_factory
         self._memory_service = memory_service
+        self._gke_workspace_service = gke_workspace_service
 
     def build(self) -> list[StructuredTool]:
         """Build application Tools, registering the schema reader only when its endpoint is configured."""
-        tools: list[StructuredTool] = [request_user_form, create_get_skill_memory_tool(self._memory_service)]
+        tools: list[StructuredTool] = [
+            request_user_form,
+            create_get_skill_memory_tool(self._memory_service),
+        ]
+        if (
+            self._session_factory is not None
+            and self._gke_workspace_service is not None
+        ):
+            tools.append(create_publish_artifact_tool(self._session_factory, self._gke_workspace_service))
         if self._session_factory is not None:
-            async def get_template(resource_name: str) -> str:
-                return await get_danaan_resource_template(self._session_factory, resource_name)
+            async def get_template(resource_name: str, template_version: str) -> str:
+                return await get_danaan_resource_template(self._session_factory, resource_name, template_version)
 
             tools.append(
                 StructuredTool.from_function(
                     coroutine=get_template,
                     name="danaan_get_resource_template",
-                    description="Read the latest Danaan resourceContent template by resourceName.",
+                    description="Read the Danaan resourceContent template by resourceName and exact template version.",
                 )
             )
         if self._client is None or self._settings.danaan_json_schema_url is None:

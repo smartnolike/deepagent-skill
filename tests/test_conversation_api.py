@@ -2,11 +2,20 @@
 
 # 覆盖鉴权、会话隔离、分页、SSE 工单链路和长期记忆隔离。
 
+import asyncio
+import uuid
+
+from database.models.agent.agent_run import AgentRun
+from database.models.agent.message import Message
+from database.models.agent.sandbox_artifact import SandboxArtifact
+from repositories.sandbox_artifact_repository import SandboxArtifactRepository
+from test_values import TEST_AUTH_TOKEN
+
 
 def test_auth_and_conversation_lifecycle(client) -> None:
     assert client.get("/health").json() == {"status": "ok"}
     assert client.post("/agent/api/conversations", json={"staff_id": "staff-a"}).status_code == 401
-    headers = {"Authorization": "Bearer test-token", "X-Request-ID": "request-1"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}", "X-Request-ID": "request-1"}
     created = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"})
     assert created.status_code == 200
     assert created.headers["X-Request-ID"] == "request-1"
@@ -31,7 +40,7 @@ def test_auth_and_conversation_lifecycle(client) -> None:
 
 
 def test_message_stream_uses_test_agent_injected_at_application_boundary(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
     response = client.post(
         f"/agent/api/conversations/{conversation_id}/messages",
@@ -41,8 +50,28 @@ def test_message_stream_uses_test_agent_injected_at_application_boundary(client)
     assert "Test agent response." in response.text
 
 
+def test_message_stream_exposes_matched_tool_lifecycle_events(client, monkeypatch) -> None:
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
+    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
+
+    async def tool_reply(*_):
+        yield "tool_start", {"name": "lookup", "tool_call_id": "call-1"}
+        yield "tool_end", {"name": "lookup", "tool_call_id": "call-1"}
+
+    monkeypatch.setattr(client.app.state.agent_service, "reply", tool_reply)
+    response = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "Look this up"},
+    )
+
+    assert "event: tool_start" in response.text
+    assert "event: tool_end" in response.text
+    assert response.text.count('"tool_call_id": "call-1"') == 2
+
+
 def test_list_conversations_is_paginated(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     for title in ("one", "two", "three"):
         client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a", "title": title})
     page = client.get("/agent/api/conversations?staff_id=staff-a&page=2&page_size=2", headers=headers)
@@ -54,7 +83,7 @@ def test_list_conversations_is_paginated(client) -> None:
 
 
 def test_explicit_memories_are_staff_isolated(client) -> None:
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     created = client.put(
         "/agent/api/memories/default-region",
         headers=headers,
@@ -70,7 +99,7 @@ def test_explicit_memories_are_staff_isolated(client) -> None:
 
 def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None:
     """流已经开始后发生异常也必须返回可与后端日志关联的 error_id。"""
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def failing_reply(*_):
@@ -92,7 +121,7 @@ def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None
 
 def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monkeypatch) -> None:
     """A page reload can restore the approval card and a second click cannot resume the Tool again."""
-    headers = {"Authorization": "Bearer test-token"}
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def confirmation_reply(*_):
@@ -143,3 +172,40 @@ def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monk
         json={"staff_id": "staff-a", "action": "approve"},
     )
     assert '"code": "AGENT_ERROR"' in repeated.text
+
+
+def test_history_restores_artifacts_on_the_assistant_message_that_published_them(client) -> None:
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
+    conversation_id = uuid.UUID(client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"])
+
+    async def seed_artifact() -> tuple[uuid.UUID, uuid.UUID]:
+        async with client.app.state.session_factory() as session:
+            user = Message(conversation_id=conversation_id, role="user", content="Generate a report")
+            session.add(user)
+            await session.flush()
+            run = AgentRun(conversation_id=conversation_id, user_message_id=user.id, status="completed")
+            assistant = Message(conversation_id=conversation_id, role="assistant", content="Report is ready: report.xlsx")
+            session.add_all([run, assistant])
+            await session.flush()
+            artifact = SandboxArtifact(
+                conversation_id=conversation_id,
+                agent_run_id=run.id,
+                sandbox_path="/workspace/output/report.xlsx",
+                filename="report.xlsx",
+                content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                size_bytes=42,
+                expires_at=None,
+            )
+            session.add(artifact)
+            await session.commit()
+            await SandboxArtifactRepository(session).attach_to_assistant_message(run.id, assistant.id)
+            return assistant.id, artifact.id
+
+    assistant_id, artifact_id = asyncio.run(seed_artifact())
+    history = client.get(f"/agent/api/conversations/{conversation_id}/messages?staff_id=staff-a", headers=headers)
+
+    assert history.status_code == 200
+    messages = history.json()
+    assistant = next(item for item in messages if item["id"] == str(assistant_id))
+    assert assistant["artifacts"] == [{"artifact_id": str(artifact_id), "filename": "report.xlsx", "size_bytes": 42}]
+    assert next(item for item in messages if item["role"] == "user")["artifacts"] == []

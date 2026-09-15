@@ -3,7 +3,10 @@
 # headers 可包含服务端 Token；本模块绝不记录 URL 参数、headers 或 MCP 调用参数。
 
 import json
+import logging
+import ssl
 from contextlib import AsyncExitStack
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -14,26 +17,35 @@ from config.mcp_server_settings import McpServerSettings
 from mcp_runtime.tool_definition import McpToolDefinition
 
 
+logger = logging.getLogger(__name__)
+
+
 class McpClient:
     """Long-lived MCP SDK session for one Streamable HTTP MCP server."""
 
-    def __init__(self, settings: McpServerSettings) -> None:
+    def __init__(self, settings: McpServerSettings, headers: dict[str, str] | None = None) -> None:
         self._settings = settings
+        self._headers = headers if headers is not None else settings.headers
         self._stack = AsyncExitStack()
+        self._http_client: httpx.AsyncClient | None = None
         self._session: ClientSession | None = None
 
     async def connect(self) -> None:
         """Open and initialize a Streamable HTTP MCP session with configured headers."""
         if self._settings.url is None:
             raise ValueError("HTTP MCP server requires url")
-        # 新版 MCP SDK 通过调用方提供的 httpx client 接收 headers 和 timeout。
+        # Streamable HTTP 会维持长期 SSE 读流，因此不能使用业务调用超时作为
+        # read timeout。单次 Tool 调用的总时限由 McpClientManager 管理。
         # 将 client 纳入同一个 ExitStack，重连和应用关闭时会一并释放连接池。
         http_client = await self._stack.enter_async_context(
             httpx.AsyncClient(
-                headers=self._settings.headers,
-                timeout=self._settings.timeout_seconds,
+                headers=self._headers,
+                timeout=self._http_timeout(),
+                verify=self._tls_verification_context(),
+                trust_env=False,
             )
         )
+        self._http_client = http_client
         read_stream, write_stream, _ = await self._stack.enter_async_context(
             streamable_http_client(
                 str(self._settings.url),
@@ -42,6 +54,40 @@ class McpClient:
         )
         self._session = await self._stack.enter_async_context(ClientSession(read_stream, write_stream))
         await self._session.initialize()
+
+    def _http_timeout(self) -> httpx.Timeout:
+        """Use bounded connection operations but allow the SSE read stream to stay idle."""
+        request_timeout = self._settings.timeout_seconds
+        return httpx.Timeout(
+            connect=min(10.0, request_timeout),
+            read=None,
+            write=request_timeout,
+            pool=min(10.0, request_timeout),
+        )
+
+    def update_headers(self, headers: dict[str, str]) -> None:
+        """Apply refreshed credentials to subsequent MCP HTTP requests.
+
+        Existing SSE response streams retain their original request headers.  This
+        intentionally updates only future requests such as ``tools/call``.
+        """
+        self._headers = dict(headers)
+        if self._http_client is not None:
+            self._http_client.headers.update(headers)
+
+    def _tls_verification_context(self) -> ssl.SSLContext:
+        """Use system trust roots plus the configured private root CA, when present."""
+        root_ca_path = self._settings.root_ca_path
+        if root_ca_path is None:
+            return ssl.create_default_context()
+        resolved_path = Path(root_ca_path).resolve()
+        if not resolved_path.is_file() or resolved_path.stat().st_size == 0:
+            raise RuntimeError(f"MCP root certificate is missing or empty: {resolved_path}")
+        # httpx 0.28 已弃用 verify="/path/to/ca.pem"。先加载系统根证书，再追加
+        # 企业内部根证书，既能访问内部 MCP，也不会破坏公有 CA 的信任链。
+        context = ssl.create_default_context()
+        context.load_verify_locations(cafile=str(resolved_path))
+        return context
 
     async def list_tools(self) -> list[McpToolDefinition]:
         """Read the server-owned Tool schemas used to register LangChain Tools."""
@@ -70,17 +116,53 @@ class McpClient:
         # MCP SDK 负责包成 JSON-RPC 的 params.arguments；arguments 本身必须保持业务字段扁平。
         result = await self._session.call_tool(tool_name, arguments)
         if getattr(result, "isError", False):
+            logger.warning("mcp_raw_tool_error", extra={"fields": {"tool_name": tool_name}})
             raise RuntimeError("MCP tool reported an error")
         structured = getattr(result, "structuredContent", None)
         if isinstance(structured, dict):
+            logger.info(
+                "mcp_tool_result_normalized",
+                extra={
+                    "fields": {
+                        "tool_name": tool_name,
+                        "source": "structuredContent",
+                        "top_level_keys": sorted(str(key) for key in structured.keys()),
+                    }
+                },
+            )
             return structured
         content = getattr(result, "content", [])
-        for item in content:
+        for index, item in enumerate(content):
             text = getattr(item, "text", None)
             if text:
                 parsed = json.loads(text)
                 if isinstance(parsed, dict):
+                    logger.info(
+                        "mcp_tool_result_normalized",
+                        extra={
+                            "fields": {
+                                "tool_name": tool_name,
+                                "source": "content_text_json",
+                                "content_index": index,
+                                "top_level_keys": sorted(str(key) for key in parsed.keys()),
+                            }
+                        },
+                    )
                     return parsed
+                logger.warning(
+                    "mcp_tool_text_result_not_object",
+                    extra={
+                        "fields": {
+                            "tool_name": tool_name,
+                            "content_index": index,
+                            "parsed_type": type(parsed).__name__,
+                        }
+                    },
+                )
+        logger.warning(
+            "mcp_tool_result_missing_object",
+            extra={"fields": {"tool_name": tool_name, "content_item_count": len(content)}},
+        )
         raise RuntimeError("MCP tool returned no object result")
 
     async def close(self) -> None:

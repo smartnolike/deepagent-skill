@@ -1,11 +1,13 @@
 """MCP startup discovery and reconnect tests."""
 
 import pytest
+import asyncio
 from types import SimpleNamespace
 
 from config.settings import Settings
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD
 from mcp_runtime import mcp_client_manager as manager_module
-from mcp_runtime.mcp_client_manager import McpClientManager
+from mcp_runtime.mcp_client_manager import McpClientManager, _result_log_preview
 from mcp_runtime.tool_definition import McpToolDefinition
 from mcp_runtime.tool_registry import McpToolRegistry
 
@@ -14,13 +16,16 @@ class FakeMcpClient:
     """HTTP MCP test double with one real-shaped Tool schema per Session."""
 
     instances: list["FakeMcpClient"] = []
+    call_delay_seconds = 0.0
 
-    def __init__(self, settings) -> None:
+    def __init__(self, settings, headers: dict[str, str] | None = None) -> None:
         self.settings = settings
+        self.headers = headers
         self.connect_calls = 0
         self.list_tools_calls = 0
         self.close_calls = 0
         self.tool_calls: list[tuple[str, dict[str, object]]] = []
+        self.header_updates: list[dict[str, str]] = []
         self.fail_next_tool_call = len(self.instances) == 0
         self.instances.append(self)
 
@@ -63,6 +68,8 @@ class FakeMcpClient:
 
     async def call_tool(self, tool_name: str, arguments: dict[str, object]) -> dict[str, object]:
         self.tool_calls.append((tool_name, arguments))
+        if self.call_delay_seconds:
+            await asyncio.sleep(self.call_delay_seconds)
         if self.fail_next_tool_call:
             self.fail_next_tool_call = False
             raise ConnectionError("expired MCP session")
@@ -71,24 +78,47 @@ class FakeMcpClient:
     async def close(self) -> None:
         self.close_calls += 1
 
+    def update_headers(self, headers: dict[str, str]) -> None:
+        self.header_updates.append(headers)
+
+
+def test_result_log_preview_is_limited_to_300_characters() -> None:
+    preview = _result_log_preview({"content": "x" * 400})
+
+    assert len(preview) == 300
+    assert preview.endswith("...")
+
 
 def _settings(
     *,
     tools: list[str] | None = None,
     context_argument_bindings: dict[str, dict[str, str]] | None = None,
     fixed_arguments: dict[str, dict[str, str]] | None = None,
+    translator_dsp: bool = False,
+    timeout_seconds: float = 15.0,
 ) -> Settings:
     """Create minimal settings with one enabled HTTP MCP server."""
     return Settings.model_validate(
         {
             "agent_env": "local",
             "allow_test_doubles": True,
-            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
-            "api_auth_token": "test-token",
+            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {
                 "knowledge": {
                     "transport": "http",
                     "url": "https://mcp.example.internal/api",
+                    "timeout_seconds": timeout_seconds,
+                    "credential_headers": (
+                        {
+                            "X-DSP": {
+                                "source": "translator_dsp",
+                                "prefix": "Bearer ",
+                            }
+                        }
+                        if translator_dsp
+                        else {}
+                    ),
                     "tools": tools if tools is not None else ["search"],
                     "context_argument_bindings": context_argument_bindings or {},
                     "fixed_arguments": fixed_arguments or {},
@@ -154,6 +184,52 @@ async def test_connection_failure_reconnects_and_retries_once(monkeypatch: pytes
     assert second.connect_calls == 1
     assert second.tool_calls == [("search", {"query": "test"})]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_call_refreshes_only_configured_dsp_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live client receives current DSP headers before its Tool request."""
+    FakeMcpClient.instances.clear()
+    monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+
+    class FakeHeaderResolver:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, bool, bool]] = []
+
+        async def resolve(self, server_id: str, *, reconnect: bool, refresh_dsp: bool = False) -> dict[str, str]:
+            self.calls.append((server_id, reconnect, refresh_dsp))
+            return {"X-DSP": f"Bearer dsp-{len(self.calls)}"}
+
+    resolver = FakeHeaderResolver()
+    manager = McpClientManager(_settings(translator_dsp=True), resolver)  # type: ignore[arg-type]
+    await manager.start()
+    client = FakeMcpClient.instances[0]
+    client.fail_next_tool_call = False
+
+    await manager.call_tool("knowledge__search", {"query": "test"})
+
+    assert resolver.calls == [("knowledge", False, False), ("knowledge", False, True)]
+    assert client.header_updates == [{"X-DSP": "Bearer dsp-2"}]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_tool_timeout_reconnects_and_retries_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A slow Tool request is bounded independently from the long-lived SSE stream."""
+    FakeMcpClient.instances.clear()
+    FakeMcpClient.call_delay_seconds = 0.03
+    monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
+    manager = McpClientManager(_settings(timeout_seconds=0.01))
+    await manager.start()
+    FakeMcpClient.instances[0].fail_next_tool_call = False
+
+    with pytest.raises(RuntimeError, match="MCP_UNAVAILABLE"):
+        await manager.call_tool("knowledge__search", {"query": "test"})
+
+    assert len(FakeMcpClient.instances) == 2
+    assert FakeMcpClient.instances[0].close_calls == 1
+    await manager.close()
+    FakeMcpClient.call_delay_seconds = 0.0
 
 
 @pytest.mark.asyncio

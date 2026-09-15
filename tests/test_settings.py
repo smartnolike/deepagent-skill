@@ -7,20 +7,106 @@ from pydantic import ValidationError
 
 from config.load_settings import load_settings
 from config.settings import Settings
+from test_values import TEST_API_KEY, TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET, TEST_SECRET_REFERENCE
 
 
 def test_local_requires_password() -> None:
     with pytest.raises(ValidationError):
         Settings.model_validate(
-            {"agent_env": "local", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+            {"agent_env": "local", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": TEST_AUTH_TOKEN, "mcp_servers": {}}
         )
 
 
 def test_dev_allows_no_password() -> None:
     settings = Settings.model_validate(
-        {"agent_env": "dev", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        {"agent_env": "dev", "allow_test_doubles": True, "database": {"host": "x", "name": "x", "user": "x"}, "api_auth_token": TEST_AUTH_TOKEN, "mcp_servers": {}}
     )
     assert settings.database.password is None
+
+
+def test_local_shell_is_no_longer_a_valid_provider() -> None:
+    with pytest.raises(ValidationError, match="filesystem"):
+        Settings.model_validate(
+            {
+                "agent_env": "local",
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "sandbox": {
+                    "provider": "local_shell",
+                },
+            }
+        )
+
+
+def test_gke_backend_requires_connection_settings() -> None:
+    with pytest.raises(ValidationError, match="sandbox.gke is required"):
+        Settings.model_validate(
+            {
+                "agent_env": "dev",
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "sandbox": {"provider": "gke_backend"},
+            }
+        )
+
+
+def test_gke_backend_requires_a_fixed_sandbox_claim_name() -> None:
+    with pytest.raises(ValidationError, match="sandbox_claim_name"):
+        Settings.model_validate(
+            {
+                "agent_env": "dev",
+                "database": {"host": "x", "name": "x", "user": "x"},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "sandbox": {
+                    "provider": "gke_backend",
+                    "gke": {
+                        "namespace": "agent-sandbox",
+                        "router_url": "http://sandbox-router:8080",
+                    },
+                },
+            }
+        )
+
+
+def test_gke_tunnel_does_not_require_a_router_url() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "local",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
+            "mcp_servers": {},
+            "sandbox": {
+                "provider": "gke_backend",
+                "gke": {
+                    "namespace": "agent-sandbox",
+                    "sandbox_claim_name": "deepagent-assistant-local",
+                    "connection_mode": "tunnel",
+                },
+            },
+        }
+    )
+
+    assert settings.sandbox.gke is not None
+    assert settings.sandbox.gke.router_url is None
+
+
+def test_gke_workspace_root_must_be_inside_runtime_workspace() -> None:
+    with pytest.raises(ValidationError, match="workspace_root must be a directory below /workspace"):
+        Settings.model_validate(
+            {
+                "agent_env": "local",
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "sandbox": {
+                    "provider": "gke_backend",
+                    "gke": {"namespace": "test", "sandbox_claim_name": "test", "connection_mode": "tunnel", "workspace_root": "/tmp/workspaces"},
+                },
+            }
+        )
 
 
 def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None:
@@ -28,8 +114,8 @@ def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None
         {
             "agent_env": "local",
             "allow_test_doubles": True,
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": None,
         }
     )
@@ -38,7 +124,7 @@ def test_empty_mcp_servers_yaml_value_is_treated_as_no_enabled_servers() -> None
 
 def test_settings_allow_missing_model_before_agent_factory_initialization() -> None:
     settings = Settings.model_validate(
-        {"agent_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": "x"}, "api_auth_token": "x", "mcp_servers": {}}
+        {"agent_env": "local", "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD}, "api_auth_token": TEST_AUTH_TOKEN, "mcp_servers": {}}
     )
     assert settings.agent.model is None
 
@@ -66,15 +152,26 @@ mcp_servers:
     assert settings.mcp_servers["danaan"].headers["Authorization"] == "Bearer mcp-secret"
 
 
+def test_mcp_relative_root_ca_path_is_resolved_from_project_root(monkeypatch, tmp_path) -> None:
+    """MCP CA 路径不应受服务进程工作目录影响。"""
+    from config.mcp_server_settings import PROJECT_ROOT, McpServerSettings
+
+    monkeypatch.chdir(tmp_path)
+
+    settings = McpServerSettings(root_ca_path="build/root.cer")
+
+    assert settings.root_ca_path == (PROJECT_ROOT / "build/root.cer").resolve()
+
+
 def test_local_langfuse_accepts_direct_environment_keys() -> None:
     settings = Settings.model_validate(
         {
             "agent_env": "local",
             "allow_test_doubles": True,
-            "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-            "api_auth_token": "x",
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
-            "langfuse": {"enabled": True, "public_key": "pk-local", "secret_key": "sk-local"},
+            "langfuse": {"enabled": True, "public_key": TEST_API_KEY, "secret_key": TEST_SECRET},
         }
     )
 
@@ -89,9 +186,9 @@ def test_dev_langfuse_requires_secret_manager_versions() -> None:
                 "agent_env": "dev",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x"},
-                "api_auth_token": "x",
+                "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
-                "langfuse": {"enabled": True, "public_key": "pk-dev", "secret_key": "sk-dev"},
+                "langfuse": {"enabled": True, "public_key": TEST_API_KEY, "secret_key": TEST_SECRET},
             }
         )
 
@@ -102,12 +199,12 @@ def test_prod_langfuse_accepts_secret_manager_versions() -> None:
             "agent_env": "prod",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "langfuse": {
                 "enabled": True,
-                "public_key_secret": "projects/example/secrets/langfuse-public/versions/1",
-                "secret_key_secret": "projects/example/secrets/langfuse-secret/versions/1",
+                "public_key_secret": TEST_SECRET_REFERENCE,
+                "secret_key_secret": TEST_SECRET_REFERENCE,
             },
         }
     )
@@ -121,14 +218,14 @@ def test_dynamic_token_auth_requires_model_base_url() -> None:
             {
                 "agent_env": "local",
                 "allow_test_doubles": True,
-                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-                "api_auth_token": "x",
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
                 "agent": {
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
                         "service_account_name": "svc",
-                        "service_account_password": "secret",
+                        "service_account_password": TEST_PASSWORD,
                     }
                 },
             }
@@ -141,14 +238,14 @@ def test_dynamic_token_auth_accepts_secret_manager_reference() -> None:
             "agent_env": "dev",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
+            "api_auth_token": TEST_AUTH_TOKEN,
             "mcp_servers": {},
             "agent": {
                 "base_url": "https://model.example/v1",
                 "token_auth": {
                     "translator_url": "https://translator.example/token",
                     "service_account_name": "svc",
-                    "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                    "service_account_password_secret": TEST_SECRET_REFERENCE,
                 },
             },
         }
@@ -165,15 +262,15 @@ def test_dynamic_token_auth_rejects_multiple_password_sources() -> None:
                 "agent_env": "dev",
                 "allow_test_doubles": True,
                 "database": {"host": "x", "name": "x", "user": "x"},
-                "api_auth_token": "x",
+                "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
                 "agent": {
                     "base_url": "https://model.example/v1",
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
                         "service_account_name": "svc",
-                        "service_account_password": "password",
-                        "service_account_password_secret": "projects/example/secrets/model-password/versions/3",
+                        "service_account_password": TEST_PASSWORD,
+                        "service_account_password_secret": TEST_SECRET_REFERENCE,
                     },
                 },
             }
@@ -186,15 +283,15 @@ def test_openai_provider_rejects_internal_token_auth() -> None:
             {
                 "agent_env": "local",
                 "allow_test_doubles": True,
-                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-                "api_auth_token": "x",
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
                 "agent": {
                     "provider": "openai",
                     "token_auth": {
                         "translator_url": "https://translator.example/token",
                         "service_account_name": "svc",
-                        "service_account_password": "secret",
+                        "service_account_password": TEST_PASSWORD,
                     },
                 },
             }
@@ -207,9 +304,9 @@ def test_openai_compatible_provider_requires_base_url() -> None:
             {
                 "agent_env": "local",
                 "allow_test_doubles": True,
-                "database": {"host": "x", "name": "x", "user": "x", "password": "x"},
-                "api_auth_token": "x",
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
-                "agent": {"provider": "openai_compatible", "api_key": "test-key"},
+                "agent": {"provider": "openai_compatible", "api_key": TEST_API_KEY},
             }
         )

@@ -8,6 +8,7 @@ from agent.harness_service import DeepAgentHarnessService
 from config.langfuse_settings import LangfuseSettings
 from core.runtime_secrets import RuntimeSecrets
 from observability import langfuse_observability
+from test_values import TEST_API_KEY, TEST_PASSWORD, TEST_SECRET
 
 
 class FakeObservability:
@@ -19,7 +20,7 @@ class FakeObservability:
 
 def test_observability_masks_credential_like_fields() -> None:
     masked = langfuse_observability._mask_sensitive_data(
-        data={"password": "value", "nested": {"access_token": "value"}, "api_key": "value", "safe": "value"}
+        data={"password": TEST_PASSWORD, "nested": {"access_token": TEST_SECRET}, "api_key": TEST_API_KEY, "safe": "value"}
     )
 
     assert masked == {
@@ -55,14 +56,14 @@ def test_observability_initializes_sdk_with_application_environment_and_release(
 
     monkeypatch.setattr(langfuse_observability, "Langfuse", langfuse_probe)
     langfuse_observability.LangfuseObservability(
-        LangfuseSettings(enabled=True, public_key="pk", secret_key="sk", release="release-1"),
+        LangfuseSettings(enabled=True, public_key=TEST_API_KEY, secret_key=TEST_SECRET, release="release-1"),
         "local",
-        RuntimeSecrets(langfuse_public_key=SecretStr("pk"), langfuse_secret_key=SecretStr("sk")),
+        RuntimeSecrets(langfuse_public_key=SecretStr(TEST_API_KEY), langfuse_secret_key=SecretStr(TEST_SECRET)),
     )
 
     assert captured["environment"] == "local"
     assert captured["release"] == "release-1"
-    assert captured["base_url"] == "https://cloud.langfuse.com"
+    assert captured["base_url"] == "http://127.0.0.1:3000"
 
 
 def test_callback_uses_only_the_cross_version_public_key_argument(monkeypatch) -> None:
@@ -74,7 +75,7 @@ def test_callback_uses_only_the_cross_version_public_key_argument(monkeypatch) -
 
     monkeypatch.setattr(langfuse_observability, "CallbackHandler", callback_probe)
     observability = langfuse_observability.LangfuseObservability.__new__(langfuse_observability.LangfuseObservability)
-    observability._public_key = "pk"
+    observability._public_key = TEST_API_KEY
 
     assert observability.create_callback() == "callback"
-    assert captured == {"public_key": "pk"}
+    assert captured == {"public_key": TEST_API_KEY}

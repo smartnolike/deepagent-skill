@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 async def request_user_form(
     form_name: str, title: str, fields: list[dict[str, Any]], prefilled_values: dict[str, Any]
 ) -> str:
-    """请求用户在前端完成表单；仅传递展示定义，不校验或保存业务参数。"""
+    """请求用户在前端完成表单；仅传递展示定义，不校验或保存业务参数。只用于danaan-cloud-resource这一个skill,其他的skill不能调用。"""
     result = "The user form request must be handled by the client."
     logger.warning(
         "user_form_tool_executed_without_interrupt",

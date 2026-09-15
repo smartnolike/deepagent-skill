@@ -43,9 +43,29 @@ set AGENT_ENV=local
 已启用的 MCP 在服务启动时必须完成连接、`initialize()` 与 `list_tools()`；应用仅将 YAML 白名单中的
 真实 Tool Schema 注册给 DeepAgent。任一启用 MCP 不可用、或缺少白名单 Tool 时，应用启动失败。运行中 MCP
 服务重启导致 Session 失效时，应用会自动建立新 Session 并使用原始参数重试该 Tool 一次；再次失败时返回受控错误。
+每个 HTTP MCP 可通过 `root_ca_path` 配置内部根证书；示例配置默认读取
+`${MCP_ROOT_CA_PATH:-build/root.cer}`。MCP 会同时信任系统根证书与该 PEM 格式的根证书，且始终校验证书主机名；
+根证书为空或缺失时，已启用的 MCP 会在启动阶段失败，而不会降级为跳过 TLS 校验。
 所有 `/agent/api/*` calls require `Authorization: Bearer <api_auth_token>`。local、dev、prod 都必须配置真实
 `agent.model`、PostgreSQL 与 HTTP MCP；测试中的 Agent、数据库与 MCP 替身仅在测试层注入，生产代码不提供 Mock fallback。
 DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `agent.enabled_skills` 启用。
+
+## 会话工作区与 Sandbox Backend
+
+`sandbox.provider` 支持两种模式：`filesystem` 仅只读加载 Skill，适合最快的本地指令测试；`gke_backend`
+连接 dev/prod 中预先部署的一个固定 GKE Agent SandboxClaim，不会为请求创建或删除 Claim。GKE 客户端固定为
+`k8s-agent-sandbox==0.4.6`，以匹配当前托管控制器的 `v1alpha1` API。
+
+Skill 源码目录不改名，仍为 `skill-packages/`。Sandbox runtime 镜像将它复制到只读的
+`/workspace/skill-packages`；每个会话的中间文件与产物实际位于
+`/workspace/staff-workspaces/{staff_id}/{conversation_id}/{work,output}`。Agent 仍使用逻辑短路径
+`/work`、`/output`，后端会在执行和文件读写时映射到自己的目录。目录在最后一次活动后保留两天，按小时
+独立删除；Sandbox Pod 重建会更早清空全部临时文件。Agent 调用 `publish_artifact` 后，前端从当前
+Sandbox 实时下载文件；过期或 Pod 已重建的文件下载接口返回 `410`。
+
+`sandbox.execute_requires_confirmation` 默认为 `true`，会让 DeepAgents 原生 `execute` 进入 HITL 审批。
+GKE 环境可显式改为 `false`。完整配置、
+生命周期和镜像约定见 [工作区 Backend 设计](docs/WORKSPACE_SANDBOX_BACKENDS.md)。
 
 `danaan-cloud-resource` 的 `danaan-base-context` 表单提交后，会自动保存
 `resourceOnboardRegion`、`applicationName`、`eimId`、`envName` 与 `useCaseShortName` 到 LangGraph

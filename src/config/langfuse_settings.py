@@ -15,7 +15,7 @@ class LangfuseSettings(BaseModel):
     secret_key: SecretStr | None = None
     public_key_secret: str | None = None
     secret_key_secret: str | None = None
-    base_url: str = "https://cloud.langfuse.com"
+    base_url: str = "http://127.0.0.1:3000"
     release: str | None = None
 
     @field_validator("public_key", "secret_key", mode="after")

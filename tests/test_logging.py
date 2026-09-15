@@ -5,6 +5,7 @@ import logging
 import sys
 
 from core.logging_config import ApplicationFormatter
+from test_values import TEST_API_KEY, TEST_AUTH_TOKEN
 
 
 def test_json_formatter_includes_redacted_exception_stack_trace() -> None:
@@ -46,10 +47,10 @@ def test_json_formatter_redacts_nested_http_style_credential_fields() -> None:
     )
     record.fields = {
         "arguments": {
-            "body": {"name": "payments", "api-key": "private-key"},
-            "headers": {"Authorization": "Bearer private-token", "X-Trace-ID": "request-123"},
+            "body": {"name": "payments", "api-key": TEST_API_KEY},
+            "headers": {"Authorization": f"Bearer {TEST_AUTH_TOKEN}", "X-Trace-ID": "request-123"},
         },
-        "result": {"Authorization": "Bearer private-token", "status": "ok"},
+        "result": {"Authorization": f"Bearer {TEST_AUTH_TOKEN}", "status": "ok"},
     }
 
     payload = json.loads(formatter.format(record))

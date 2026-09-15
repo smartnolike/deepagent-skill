@@ -7,6 +7,7 @@ from pydantic import SecretStr
 
 from config.settings import Settings
 from core import startup_secrets
+from test_values import TEST_AUTH_TOKEN, TEST_PASSWORD, TEST_SECRET, new_test_secret_reference
 
 
 class FakeGoogleSecretManager:
@@ -18,21 +19,25 @@ class FakeGoogleSecretManager:
 
     async def access_secret(self, secret_version_name: str) -> SecretStr:
         self.accessed.append(secret_version_name)
-        return SecretStr("resolved-password")
+        return SecretStr(TEST_SECRET)
 
     async def close(self) -> None:
         self.closed = True
 
 
-def _settings(token_auth: dict[str, str], langfuse: dict[str, object] | None = None) -> Settings:
+def _settings(
+    token_auth: dict[str, str],
+    langfuse: dict[str, object] | None = None,
+    mcp_servers: dict[str, object] | None = None,
+) -> Settings:
     """构造最小内部模型配置。"""
     return Settings.model_validate(
         {
             "agent_env": "dev",
             "allow_test_doubles": True,
             "database": {"host": "x", "name": "x", "user": "x"},
-            "api_auth_token": "x",
-            "mcp_servers": {},
+            "api_auth_token": TEST_AUTH_TOKEN,
+            "mcp_servers": mcp_servers or {},
             "agent": {"base_url": "https://model.example/v1", "token_auth": token_auth},
             "langfuse": langfuse or {},
         }
@@ -44,7 +49,7 @@ async def test_startup_resolves_secret_manager_password_once(monkeypatch: pytest
     """Secret reference 在启动期读取一次并注入内存。"""
     manager = FakeGoogleSecretManager()
     monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
-    secret_version = "projects/example/secrets/model-password/versions/3"
+    secret_version = new_test_secret_reference()
 
     runtime_secrets = await startup_secrets.resolve_runtime_secrets(
         _settings(
@@ -56,7 +61,7 @@ async def test_startup_resolves_secret_manager_password_once(monkeypatch: pytest
         )
     )
 
-    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == "resolved-password"
+    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == TEST_SECRET
     assert manager.accessed == [secret_version]
     assert manager.closed is True
 
@@ -71,12 +76,12 @@ async def test_startup_uses_direct_local_password_without_secret_manager(monkeyp
             {
                 "translator_url": "https://translator.example/token",
                 "service_account_name": "svc",
-                "service_account_password": "local-password",
+                "service_account_password": TEST_PASSWORD,
             }
         )
     )
 
-    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == "local-password"
+    assert runtime_secrets.require_translator_service_account_password().get_secret_value() == TEST_PASSWORD
 
 
 @pytest.mark.asyncio
@@ -84,15 +89,15 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
     """dev/prod Langfuse Key 只在启动期读取并保留在 RuntimeSecrets。"""
     manager = FakeGoogleSecretManager()
     monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
-    public_version = "projects/example/secrets/langfuse-public/versions/1"
-    secret_version = "projects/example/secrets/langfuse-secret/versions/1"
+    public_version = new_test_secret_reference()
+    secret_version = new_test_secret_reference()
 
     runtime_secrets = await startup_secrets.resolve_runtime_secrets(
         _settings(
             {
                 "translator_url": "https://translator.example/token",
                 "service_account_name": "svc",
-                "service_account_password": "local-password",
+                "service_account_password": TEST_PASSWORD,
             },
             {
                 "enabled": True,
@@ -102,7 +107,70 @@ async def test_startup_resolves_langfuse_keys_from_secret_manager_once(monkeypat
         )
     )
 
-    assert runtime_secrets.require_langfuse_public_key().get_secret_value() == "resolved-password"
-    assert runtime_secrets.require_langfuse_secret_key().get_secret_value() == "resolved-password"
+    assert runtime_secrets.require_langfuse_public_key().get_secret_value() == TEST_SECRET
+    assert runtime_secrets.require_langfuse_secret_key().get_secret_value() == TEST_SECRET
     assert manager.accessed == [public_version, secret_version]
     assert manager.closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_resolves_declared_mcp_secret_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    """MCP PATs are read only during startup and retained in RuntimeSecrets."""
+    manager = FakeGoogleSecretManager()
+    monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: manager)
+    pat_version = new_test_secret_reference()
+
+    runtime_secrets = await startup_secrets.resolve_runtime_secrets(
+        _settings(
+            {
+                "translator_url": "https://translator.example/token",
+                "service_account_name": "svc",
+                "service_account_password": TEST_PASSWORD,
+            },
+            mcp_servers={
+                "confidence": {
+                    "transport": "http",
+                    "url": "https://mcp.example.internal/api",
+                    "credential_headers": {
+                        "X-PAT": {"source": "gcp_secret_manager", "secret_version": pat_version}
+                    },
+                    "tools": ["search"],
+                }
+            },
+        )
+    )
+
+    assert runtime_secrets.require_mcp_secret(pat_version).get_secret_value() == TEST_SECRET
+    assert manager.accessed == [pat_version]
+    assert manager.closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_skips_secrets_for_disabled_mcp(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Disabled MCPs must not access Secret Manager during application startup."""
+    monkeypatch.setattr(startup_secrets, "GoogleSecretManager", lambda: pytest.fail("must not create manager"))
+    pat_version = new_test_secret_reference()
+
+    runtime_secrets = await startup_secrets.resolve_runtime_secrets(
+        _settings(
+            {
+                "translator_url": "https://translator.example/token",
+                "service_account_name": "svc",
+                "service_account_password": TEST_PASSWORD,
+            },
+            mcp_servers={
+                "disabled": {
+                    "enabled": False,
+                    "transport": "http",
+                    "url": "https://mcp.example.internal/api",
+                    "credential_headers": {
+                        "X-PAT": {"source": "gcp_secret_manager", "secret_version": pat_version}
+                    },
+                    "tools": ["search"],
+                }
+            },
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="MCP_SECRET_UNAVAILABLE"):
+        runtime_secrets.require_mcp_secret(pat_version)

@@ -12,7 +12,10 @@ from core.runtime_secrets import RuntimeSecrets
 
 
 def create_chat_model(
-    settings: AgentSettings, httpx_client: HttpxClient | None, runtime_secrets: RuntimeSecrets | None = None
+    settings: AgentSettings,
+    httpx_client: HttpxClient | None,
+    runtime_secrets: RuntimeSecrets | None = None,
+    translator_token_provider: TranslatorTokenProvider | None = None,
 ) -> ChatOpenAI:
     """按 provider 创建内部动态 Token 或外部 OpenAI-compatible 固定 Key 模型。"""
     api_key: str | Callable[[], Awaitable[str]]
@@ -24,11 +27,12 @@ def create_chat_model(
             raise RuntimeError("HTTP client is required for dynamic model token authentication")
         if runtime_secrets is None:
             raise RuntimeError("Internal model requires resolved runtime secrets")
-        api_key = TranslatorTokenProvider(
+        provider = translator_token_provider or TranslatorTokenProvider(
             settings.token_auth,
             runtime_secrets.require_translator_service_account_password(),
             httpx_client,
-        ).get_token
+        )
+        api_key = provider.get_token
         base_url = settings.base_url
     else:
         if settings.api_key is None:

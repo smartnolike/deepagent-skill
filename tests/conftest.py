@@ -13,6 +13,7 @@ import main as main_module
 from main import create_app
 
 from fake_agent_service import FakeAgentService
+from test_values import TEST_API_KEY, TEST_AUTH_TOKEN, TEST_PASSWORD
 
 
 @pytest.fixture
@@ -22,9 +23,9 @@ def client(tmp_path, monkeypatch):
     settings = Settings.model_validate(
         {
             "agent_env": "local",
-            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": "postgres"},
-            "api_auth_token": "test-token",
-            "agent": {"provider": "openai", "model": "test-model", "api_key": "test-key"},
+            "database": {"host": "localhost", "name": "deepagent", "user": "postgres", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
+            "agent": {"provider": "openai", "model": "test-model", "api_key": TEST_API_KEY},
             "mcp_servers": {},
         }
     )

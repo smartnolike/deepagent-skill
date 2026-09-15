@@ -1,6 +1,6 @@
 """使用指定根证书访问外部 API 的专用异步 HTTP 客户端。"""
 
-# 所有外部 HTTP 请求共用一个 AsyncClient，复用连接池并强制使用 build/root.cer 校验服务端证书。
+# 所有外部 HTTP 请求共用一个 AsyncClient，复用连接池并强制使用 build/hsbc_root.cer 校验服务端证书。
 
 import logging
 import time

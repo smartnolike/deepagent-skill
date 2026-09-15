@@ -12,6 +12,18 @@ agent:
     request_timeout_seconds: 3
   skills_dir: skill-packages
   enabled_skills: [danaan-cloud-resource]
+sandbox:
+  provider: ${SANDBOX_PROVIDER:-gke_backend}
+  execute_requires_confirmation: false
+  gke:
+    namespace: ${SANDBOX_NAMESPACE:-danaan-gcp-portal}
+    sandbox_claim_name: danaan-agent-sandbox-claim
+    connection_mode: direct
+    router_url: http://danaan-agent-sandbox-router-svc:38088
+    runtime_port: 38087
+    router_auth_token: ${SANDBOX_ROUTER_AUTH_TOKEN:-}
+    workspace_root: /workspace/staff-workspaces
+    workspace_retention_seconds: 172800
 database:
   host: 127.0.0.1
   port: 5432
@@ -36,6 +48,8 @@ mcp_servers:
     enabled: true
     transport: http
     url: ${DANAAN_MCP_URL}
+    # 自签/企业内部 CA；部署时可通过 MCP_ROOT_CA_PATH 覆盖。
+    root_ca_path: ${MCP_ROOT_CA_PATH:-build/root.cer}
     headers:
       Authorization: Bearer ${DANAAN_MCP_TOKEN}
     timeout_seconds: 15
@@ -43,6 +57,8 @@ mcp_servers:
     reconnect_max_delay_seconds: 30
     tools: [external_resource_add]
     confirmation_required_tools: [external_resource_add]
+    frontend_diagnostic_tools: [get_resource_version]
+    expose_frontend_diagnostic_results: true
     context_argument_bindings:
       external_resource_add:
         body.creator: staff_id
@@ -50,3 +66,22 @@ mcp_servers:
       external_resource_add:
         body.creatorName: ""
         body.creatorEmail: ""
+  confluence:
+    enabled: true
+    transport: http
+    url: ${CONFLUENCE_MCP_URL}
+    root_ca_path: ${CONFLUENCE_MCP_ROOT_CA_PATH:-build/hsbc_root.cer}
+    headers:
+      X-HSBC-GAIP-MCPGATEWAY-ID-TOKEN-TYPE: dsp
+    credential_headers:
+      X-HSBC-GAIP-MCPGATEWAY-ID-TOKEN:
+        source: translator_dsp
+        prefix: "Bearer "
+        refresh_on_reconnect: true
+      X-HSBC-GAIP-MCPGATEWAY-CONFLUENCE-PAT-TOKEN:
+        source: gcp_secret_manager
+        secret_version: ${CONFLUENCE_PAT_SECRET_VERSION}
+    timeout_seconds: 120
+    reconnect_initial_delay_seconds: 1
+    reconnect_max_delay_seconds: 30
+    tools: [confluence_get_page]
