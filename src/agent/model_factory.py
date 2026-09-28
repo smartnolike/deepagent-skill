@@ -31,7 +31,7 @@ def create_chat_model(
             vertexai=True,
             retries=1,
             request_timeout=300,
-            client_args=client_args,
+            client_args=client_args
         )
 
     api_key: str | Callable[[], Awaitable[str]]
