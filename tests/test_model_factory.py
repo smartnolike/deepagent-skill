@@ -11,21 +11,41 @@ from config.agent_settings import AgentSettings
 from test_values import TEST_API_KEY
 
 
-def test_openai_provider_uses_fixed_api_key() -> None:
+def test_openai_provider_uses_fixed_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+    expected_async_client = object()
+
+    def chat_openai_probe(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return captured
+
+    monkeypatch.setattr(model_factory, "ChatOpenAI", chat_openai_probe)
     model = create_chat_model(
-        AgentSettings(provider="openai", model="gpt-4.1-mini", api_key=TEST_API_KEY), None
+        AgentSettings(provider="openai", model="gpt-4.1-mini", api_key=TEST_API_KEY),
+        SimpleNamespace(async_client=expected_async_client),  # type: ignore[arg-type]
     )
 
-    assert model.model_name == "gpt-4.1-mini"
-    assert model.openai_api_key.get_secret_value() == TEST_API_KEY
+    assert model["model"] == "gpt-4.1-mini"
+    assert model["api_key"] == TEST_API_KEY
+    assert model["http_async_client"] is expected_async_client
 
 
 def test_openai_provider_requires_fixed_api_key() -> None:
     with pytest.raises(RuntimeError, match="External model requires agent.api_key"):
-        create_chat_model(AgentSettings(provider="openai", model="gpt-4.1-mini"), None)
+        create_chat_model(
+            AgentSettings(provider="openai", model="gpt-4.1-mini"),
+            SimpleNamespace(async_client=object()),  # type: ignore[arg-type]
+        )
 
 
-def test_openai_compatible_provider_uses_custom_base_url() -> None:
+def test_openai_compatible_provider_uses_custom_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def chat_openai_probe(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return captured
+
+    monkeypatch.setattr(model_factory, "ChatOpenAI", chat_openai_probe)
     model = create_chat_model(
         AgentSettings(
             provider="openai_compatible",
@@ -33,10 +53,10 @@ def test_openai_compatible_provider_uses_custom_base_url() -> None:
             base_url="https://api.deepseek.com",
             api_key=TEST_API_KEY,
         ),
-        None,
+        SimpleNamespace(async_client=object()),  # type: ignore[arg-type]
     )
 
-    assert str(model.openai_api_base) == "https://api.deepseek.com"
+    assert model["base_url"] == "https://api.deepseek.com"
 
 
 def test_internal_provider_requires_dynamic_token_configuration() -> None:
@@ -53,12 +73,12 @@ def test_google_genai_provider_uses_vertex_ai_configuration(monkeypatch: pytest.
 
     monkeypatch.setattr(model_factory, "ChatGoogleGenerativeAI", chat_google_probe)
     result = model_factory.create_chat_model(
-        AgentSettings(provider="google_genai", model="gemini-2.5-pro", api_key=TEST_API_KEY), None
+        AgentSettings(provider="google_genai", model="gemini-2.5-pro"), None
     )
 
     assert result["model"] == "gemini-2.5-pro"
     assert result["project"] == "hsbc-9445955-wselevuk01-dev"
-    assert result["location"] == "us"
+    assert result["location"] == "eu"
     assert result["vertexai"] is True
 
 

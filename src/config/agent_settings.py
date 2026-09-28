@@ -24,18 +24,16 @@ class AgentSettings(BaseModel):
     @model_validator(mode="after")
     def validate_model_auth(self) -> "AgentSettings":
         """拒绝内部动态 Token 与外部固定 Key 的混合配置。"""
-        if self.token_auth is not None and self.base_url is None:
+        if self.provider == "internal" and self.token_auth is not None and self.base_url is None:
             raise ValueError("agent.base_url is required when agent.token_auth is configured")
         if self.provider == "internal" and self.api_key is not None:
-            raise ValueError(
-                "agent.api_key is only supported when agent.provider is openai, openai_compatible, or google_genai"
-            )
-        if self.provider in {"openai", "openai_compatible", "google_genai"} and self.token_auth is not None:
+            raise ValueError("agent.api_key is only supported when agent.provider is openai or openai_compatible")
+        if self.provider in {"openai", "openai_compatible"} and self.token_auth is not None:
             raise ValueError("agent.token_auth is only supported when agent.provider is internal")
         if self.provider == "openai" and self.base_url is not None:
             raise ValueError("agent.base_url is not supported when agent.provider is openai")
         if self.provider == "openai_compatible" and self.base_url is None:
             raise ValueError("agent.base_url is required when agent.provider is openai_compatible")
-        if self.provider == "google_genai" and self.api_key is None:
-            raise ValueError("agent.api_key is required when agent.provider is google_genai")
+        if self.provider == "google_genai" and self.base_url is not None:
+            raise ValueError("agent.base_url is not supported when agent.provider is google_genai")
         return self

@@ -2,7 +2,11 @@
 
 # 未配置模型时工厂必须拒绝启动；生产环境不提供 fallback harness。
 
+import asyncio
+
+import httpx
 import pytest
+from types import SimpleNamespace
 
 from agent.agent_factory import (
     _confirmation_description,
@@ -50,9 +54,18 @@ def test_factory_accepts_fixed_gke_backend() -> None:
         }
     )
 
-    service = create_agent_service(settings, McpClientManager(settings), MemoryService(InMemoryStore()))
+    async_client = httpx.AsyncClient()
+    try:
+        service = create_agent_service(
+            settings,
+            McpClientManager(settings),
+            MemoryService(InMemoryStore()),
+            httpx_client=SimpleNamespace(async_client=async_client),  # type: ignore[arg-type]
+        )
 
-    assert service.gke_workspace_service is not None
+        assert service.gke_workspace_service is not None
+    finally:
+        asyncio.run(async_client.aclose())
 
 
 def test_harness_profile_key_matches_prebuilt_chat_model_provider() -> None:

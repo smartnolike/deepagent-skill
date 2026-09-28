@@ -312,8 +312,8 @@ def test_openai_compatible_provider_requires_base_url() -> None:
         )
 
 
-def test_google_genai_provider_requires_api_key() -> None:
-    with pytest.raises(ValidationError, match="agent.api_key"):
+def test_google_genai_provider_rejects_base_url() -> None:
+    with pytest.raises(ValidationError, match="agent.base_url"):
         Settings.model_validate(
             {
                 "agent_env": "local",
@@ -321,6 +321,33 @@ def test_google_genai_provider_requires_api_key() -> None:
                 "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
                 "api_auth_token": TEST_AUTH_TOKEN,
                 "mcp_servers": {},
-                "agent": {"provider": "google_genai", "model": "gemini-2.5-pro"},
+                "agent": {
+                    "provider": "google_genai",
+                    "model": "gemini-2.5-pro",
+                    "base_url": "https://generativelanguage.googleapis.com",
+                },
             }
         )
+
+
+def test_google_genai_provider_allows_token_auth() -> None:
+    settings = Settings.model_validate(
+        {
+            "agent_env": "local",
+            "allow_test_doubles": True,
+            "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+            "api_auth_token": TEST_AUTH_TOKEN,
+            "mcp_servers": {},
+            "agent": {
+                "provider": "google_genai",
+                "model": "gemini-2.5-pro",
+                "token_auth": {
+                    "translator_url": "https://translator.example/token",
+                    "service_account_name": "svc",
+                    "service_account_password": TEST_PASSWORD,
+                },
+            },
+        }
+    )
+
+    assert settings.agent.token_auth is not None
