@@ -2,7 +2,9 @@
 
 # ChatOpenAI 原生支持 async api_key callback，因而无需修改 OpenAI 协议客户端。
 
+import os
 from langchain_openai import ChatOpenAI
+from langchain_google_genai import ChatGoogleGenerativeAI
 from collections.abc import Awaitable, Callable
 
 from agent.translator_token_provider import TranslatorTokenProvider
@@ -16,8 +18,22 @@ def create_chat_model(
     httpx_client: HttpxClient | None,
     runtime_secrets: RuntimeSecrets | None = None,
     translator_token_provider: TranslatorTokenProvider | None = None,
-) -> ChatOpenAI:
-    """按 provider 创建内部动态 Token 或外部 OpenAI-compatible 固定 Key 模型。"""
+) -> ChatOpenAI | ChatGoogleGenerativeAI:
+    """按 provider 创建内部、OpenAI-compatible 或 Google GenAI 模型。"""
+    if settings.provider == "google_genai":
+        client_args: dict[str, str] = {}
+        if os.getenv("AGENT_ENV") == "local":
+            client_args["proxy"] = "http://10.98.40.131:3128"
+        return ChatGoogleGenerativeAI(
+            model=settings.model,
+            project="hsbc-9445955-wselevuk01-dev",
+            location="us",
+            vertexai=True,
+            retries=1,
+            request_timeout=300,
+            client_args=client_args,
+        )
+
     api_key: str | Callable[[], Awaitable[str]]
     base_url: str | None
     if settings.provider == "internal":

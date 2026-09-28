@@ -55,9 +55,10 @@ def test_factory_accepts_fixed_gke_backend() -> None:
     assert service.gke_workspace_service is not None
 
 
-def test_harness_profile_key_matches_prebuilt_chat_openai_provider() -> None:
-    assert _harness_profile_key("gpt-5.6-luna") == "openai:gpt-5.6-luna"
-    assert _harness_profile_key("openai:gpt-5.6-luna") == "openai:gpt-5.6-luna"
+def test_harness_profile_key_matches_prebuilt_chat_model_provider() -> None:
+    assert _harness_profile_key("openai", "gpt-5.6-luna") == "openai:gpt-5.6-luna"
+    assert _harness_profile_key("internal", "openai:gpt-5.6-luna") == "openai:gpt-5.6-luna"
+    assert _harness_profile_key("google_genai", "gemini-2.5-pro") == "google_genai:gemini-2.5-pro"
 
 
 def test_confirmation_description_hides_mcp_implementation_details() -> None:

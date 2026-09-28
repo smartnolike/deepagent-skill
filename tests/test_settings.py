@@ -310,3 +310,17 @@ def test_openai_compatible_provider_requires_base_url() -> None:
                 "agent": {"provider": "openai_compatible", "api_key": TEST_API_KEY},
             }
         )
+
+
+def test_google_genai_provider_requires_api_key() -> None:
+    with pytest.raises(ValidationError, match="agent.api_key"):
+        Settings.model_validate(
+            {
+                "agent_env": "local",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "agent": {"provider": "google_genai", "model": "gemini-2.5-pro"},
+            }
+        )

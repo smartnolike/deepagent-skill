@@ -44,6 +44,24 @@ def test_internal_provider_requires_dynamic_token_configuration() -> None:
         create_chat_model(AgentSettings(provider="internal", model="internal-model"), None)
 
 
+def test_google_genai_provider_uses_vertex_ai_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: dict[str, object] = {}
+
+    def chat_google_probe(**kwargs: object) -> dict[str, object]:
+        captured.update(kwargs)
+        return captured
+
+    monkeypatch.setattr(model_factory, "ChatGoogleGenerativeAI", chat_google_probe)
+    result = model_factory.create_chat_model(
+        AgentSettings(provider="google_genai", model="gemini-2.5-pro", api_key=TEST_API_KEY), None
+    )
+
+    assert result["model"] == "gemini-2.5-pro"
+    assert result["project"] == "hsbc-9445955-wselevuk01-dev"
+    assert result["location"] == "us"
+    assert result["vertexai"] is True
+
+
 def test_openai_compatible_provider_passes_application_http_client(monkeypatch: pytest.MonkeyPatch) -> None:
     """模型网关请求必须复用应用持有的、配置企业根证书的异步客户端。"""
     captured: dict[str, object] = {}

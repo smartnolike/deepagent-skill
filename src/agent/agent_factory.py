@@ -47,7 +47,7 @@ def create_agent_service(
     if settings.agent.model is None:
         raise RuntimeError("agent.model is required")
     register_harness_profile(
-        _harness_profile_key(settings.agent.model),
+        _harness_profile_key(settings.agent.provider, settings.agent.model),
         HarnessProfile(
             # 不注册默认子 Agent，避免将 task Tool 暴露给当前单 Agent Harness。
             general_purpose_subagent=GeneralPurposeSubagentProfile(enabled=False),
@@ -136,9 +136,13 @@ def _confirmation_description(server_id: str, tool_name: str) -> str:
     return "Review and approve this requested action."
 
 
-def _harness_profile_key(model: str) -> str:
-    """为预构建 ChatOpenAI 使用其解析出的 canonical provider:model key。"""
-    return f"openai:{model.removeprefix('openai:')}"
+def _harness_profile_key(provider: str, model: str) -> str:
+    """Return the canonical DeepAgents profile key for the configured chat model."""
+    if provider in {"internal", "openai", "openai_compatible"}:
+        return f"openai:{model.removeprefix('openai:')}"
+    if provider == "google_genai":
+        return f"google_genai:{model.removeprefix('google_genai:')}"
+    raise ValueError(f"Unsupported provider: {provider}")
 
 
 def _skill_bound_system_prompt(enabled_skills: list[str]) -> str:
