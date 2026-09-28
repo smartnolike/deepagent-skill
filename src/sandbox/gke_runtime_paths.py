@@ -74,9 +74,12 @@ class ConversationWorkspacePaths:
 
         # One pass over the original command is essential: a physical output
         # path itself ends in ``/output`` and must never be treated as another
-        # logical alias on a later replacement pass.
+        # logical alias on a later replacement pass.  A logical root is also
+        # valid as a complete shell argument (for example ``mkdir -p /output``),
+        # so recognize ordinary shell token delimiters as well as a child slash.
         path_pattern = re.compile(
-            r"(?<![A-Za-z0-9_-])(?P<path>/workspace/(?:skill-packages|output|work)|/(?:skill-packages|output|work))(?=$|/)"
+            r"(?<![A-Za-z0-9_-])(?P<path>/workspace/(?:skill-packages|output|work)|/(?:skill-packages|output|work))"
+            r"(?=$|[/\s'\";|&()<>])"
         )
         command = path_pattern.sub(lambda match: aliases[match.group("path")], command)
 

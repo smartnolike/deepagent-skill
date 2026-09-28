@@ -34,6 +34,29 @@ def test_command_mapping_rewrites_base64_logical_paths_but_not_physical_paths() 
     assert mapped.endswith(physical)
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("mkdir -p /output && cd /work", "mkdir -p {output} && cd {work}"),
+        ("test -d /output; ls /work", "test -d {output}; ls {work}"),
+        ('python script.py --input "/work/input.json" --output \'/output/report.xlsx\'', 'python script.py --input "{work}/input.json" --output \'{output}/report.xlsx\''),
+    ],
+)
+def test_command_mapping_rewrites_bare_logical_path_arguments(command: str, expected: str) -> None:
+    paths = ConversationWorkspacePaths("/workspace/staff-workspaces", "staff_123", "conversation")
+
+    mapped = paths.map_command(command)
+
+    assert mapped == expected.format(work=f"{paths.workspace}/work", output=f"{paths.workspace}/output")
+
+
+def test_command_mapping_does_not_rewrite_similarly_named_paths() -> None:
+    paths = ConversationWorkspacePaths("/workspace/staff-workspaces", "staff_123", "conversation")
+    command = "echo /workbench /output-file /skill-packages-old"
+
+    assert paths.map_command(command) == command
+
+
 def test_command_output_replaces_current_workspace_paths_with_logical_paths() -> None:
     paths = ConversationWorkspacePaths("/workspace/staff-workspaces", "staff_123", "conversation")
     physical_root = "/workspace/staff-workspaces/staff_123/conversation"
