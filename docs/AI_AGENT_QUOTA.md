@@ -38,7 +38,7 @@ POST /messages
 
 ## 模型与价格配置
 
-Vertex AI 的调用位置固定为 `global`，但额度价格表不再存储 `location` 字段。切换模型时，先新增该模型的价格记录，再修改 `agent.model`；找不到当前模型有效价格时，配置了额度规则的请求会返回 `503 MODEL_PRICING_NOT_CONFIGURED`。
+Vertex AI 的调用位置固定为 `global`，但额度价格表不再存储 `location` 字段。价格表的 `provider` 与 `agent.provider` 保持一致，例如 Vertex Gemini 使用 `google_genai`。切换模型时，先新增该模型的价格记录，再修改 `agent.model`；找不到当前模型有效价格时，配置了额度规则的请求会返回 `503 MODEL_PRICING_NOT_CONFIGURED`。
 
 模型价格应新增版本，而不是覆盖历史行：使用 `effective_from` 和 `effective_to` 表示价格生效期。
 

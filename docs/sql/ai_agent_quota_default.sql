@@ -21,7 +21,7 @@ INSERT INTO ai_agent_model_pricings (
 )
 VALUES (
     gen_random_uuid(),
-    'vertex_ai',
+    'google_genai',
     'gemini-3.8-flash',
     DATE '2026-08-13',
     DATE '2026-12-31',

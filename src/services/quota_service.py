@@ -185,7 +185,7 @@ class QuotaService:
         )
 
     async def _current_pricing(self) -> ModelPricing:
-        provider = "vertex_ai" if self._agent_settings.provider == "google_genai" else self._agent_settings.provider
+        provider = self._agent_settings.provider
         model = self._agent_settings.model
         if not model:
             raise DomainError("MODEL_PRICING_NOT_CONFIGURED", "The configured model has no pricing record", 503)
