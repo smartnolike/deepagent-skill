@@ -22,6 +22,132 @@
 
 所有价格均用整数 `micro-USD`（一美元的百万分之一）保存。模型价格字段单位是“每一百万 Token 的 micro-USD”。例如 `$0.75 / 1M Token` 保存为 `750000`。
 
+### 表关系
+
+```text
+ai_agent_quota_rules
+  ├── ai_agent_staff_quota_rule_assignments ──> staff_id
+  └── ai_agent_staff_usage_events
+
+ai_agent_model_pricings
+  └── ai_agent_staff_usage_events
+
+staff_id + period_month
+  └── ai_agent_staff_monthly_usages
+```
+
+`ai_agent_quota_rules` 定义“套餐”；`ai_agent_staff_quota_rule_assignments` 决定某位员工使用哪一个套餐；月度汇总和调用账本始终按 `staff_id` 独立计算，不会让同一规则下的员工共享额度。
+
+### `ai_agent_quota_rules`
+
+可复用的额度规则。管理员只需创建一次“默认”“标准”或“高级”等规则，再将多个员工绑定到它。
+
+| 字段 | 类型 | 约束/示例 | 含义 |
+| --- | --- | --- | --- |
+| `id` | UUID | PK | 规则主键。 |
+| `code` | VARCHAR(100) | UNIQUE，例如 `default` | 面向配置和管理接口的稳定标识。 |
+| `name` | VARCHAR(255) | `默认员工额度` | 前端/管理端展示名。 |
+| `is_default` | BOOLEAN | 同时最多一条为 `true` | 没有员工专属绑定时使用的规则。 |
+| `enabled` | BOOLEAN | 默认 `true` | 为 `false` 时命中该规则的请求返回 `403 QUOTA_DISABLED`。 |
+| `request_limit` | BIGINT NULL | `1000` | 单员工单月请求上限；`NULL` 代表不限。 |
+| `input_token_limit` | BIGINT NULL | `NULL` | 单员工单月输入 Token 上限。 |
+| `output_token_limit` | BIGINT NULL | `NULL` | 单员工单月输出 Token 上限，含 reasoning。 |
+| `total_token_limit` | BIGINT NULL | `1000000` | 单员工单月输入与输出合计 Token 上限。 |
+| `cost_micro_usd_limit` | BIGINT NULL | `10000000` = `$10` | 单员工单月费用上限。 |
+| `max_output_tokens` | BIGINT NULL | `4000` | 单次调用的最大可预占输出量；使用费用、总 Token 或输出 Token 限制时必须设置。 |
+| `created_at` / `updated_at` | TIMESTAMPTZ | 自动维护 | 规则创建和最近修改时间。 |
+
+### `ai_agent_staff_quota_rule_assignments`
+
+员工和规则的当前绑定表。它是 `staff_ids` 数组落库后的规范化形式，而不是在规则表中保存 JSON 数组。
+
+| 字段 | 类型 | 约束/示例 | 含义 |
+| --- | --- | --- | --- |
+| `staff_id` | VARCHAR(255) | PK，例如 `staff_001` | 员工唯一标识；作为主键意味着一名员工只能绑定一条当前规则。 |
+| `quota_rule_id` | UUID | FK → `ai_agent_quota_rules.id` | 员工使用的规则。删除规则时绑定自动删除。 |
+| `assigned_at` | TIMESTAMPTZ | 自动维护 | 最近绑定时间。 |
+| `assigned_by` | VARCHAR(255) NULL | 管理员 staff_id | 可选审计字段。 |
+
+例如一个规则接口请求：
+
+```json
+{"staff_ids": ["staff_001", "staff_002"]}
+```
+
+会生成两行绑定记录，但二者的 `quota_rule_id` 相同。
+
+### `ai_agent_model_pricings`
+
+模型价格版本表。`provider` 必须与 `agent.provider` 一致；Vertex Gemini 使用 `google_genai`。不存储 `location`，因为当前模型调用固定为 `global`。
+
+| 字段 | 类型 | 约束/示例 | 含义 |
+| --- | --- | --- | --- |
+| `id` | UUID | PK | 价格版本主键。 |
+| `provider` | VARCHAR(100) | 例如 `google_genai` | 模型提供方配置值。 |
+| `model` | VARCHAR(255) | `gemini-3.8-flash` | 与 `agent.model` 匹配的模型名。 |
+| `effective_from` | DATE | `2026-08-13` | 此价格开始生效的日期。 |
+| `effective_to` | DATE NULL | `2026-12-31` | 此价格最后有效日期；`NULL` 代表持续有效。 |
+| `input_micro_usd_per_mtok` | BIGINT | `750000` | 普通输入每 100 万 Token 的价格。 |
+| `cached_input_micro_usd_per_mtok` | BIGINT | `75000` | 缓存命中输入每 100 万 Token 的价格。 |
+| `output_micro_usd_per_mtok` | BIGINT | `3750000` | 输出每 100 万 Token 的价格，包含 reasoning。 |
+| `enabled` | BOOLEAN | 默认 `true` | 是否允许本价格版本参与匹配。 |
+| `created_at` | TIMESTAMPTZ | 自动维护 | 价格记录创建时间。 |
+
+唯一约束为 `(provider, model, effective_from)`。价格变化时新增记录而非修改旧记录，例如 2027 年涨价时增加一条新的 `effective_from = 2027-01-01` 记录。
+
+### `ai_agent_staff_monthly_usages`
+
+月度聚合表。每位员工每个月一行，由首次模型调用自动创建；用于在调用前快速判断是否还有剩余额度。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `staff_id` | VARCHAR(255) | 员工 ID，与 `period_month` 组成复合主键。 |
+| `period_month` | DATE | 当月第一天，例如 `2026-10-01`。 |
+| `request_used` | BIGINT | 已完成并结算的请求数。 |
+| `input_tokens_used` | BIGINT | 已结算普通/缓存输入合计 Token。 |
+| `output_tokens_used` | BIGINT | 已结算输出 Token，含 reasoning。 |
+| `total_tokens_used` | BIGINT | 已结算输入与输出 Token 合计。 |
+| `cost_micro_usd_used` | BIGINT | 已结算成本。 |
+| `request_reserved` | BIGINT | 正在执行、尚未结算的请求数。 |
+| `input_tokens_reserved` | BIGINT | 为执行中请求预占的输入 Token。 |
+| `output_tokens_reserved` | BIGINT | 为执行中请求按 `max_output_tokens` 预占的输出 Token。 |
+| `total_tokens_reserved` | BIGINT | 当前预占 Token 合计。 |
+| `cost_micro_usd_reserved` | BIGINT | 当前预占费用。 |
+| `updated_at` | TIMESTAMPTZ | 最近一次预占、结算或释放时间。 |
+
+额度判断统一使用：
+
+```text
+已结算值 + 已预占值 + 本次请求预占值 <= 规则上限
+```
+
+### `ai_agent_staff_usage_events`
+
+调用级账本。它既用于审计和成本报表，也用 `request_id` 防止浏览器重试导致重复扣额。
+
+| 字段 | 类型 | 含义 |
+| --- | --- | --- |
+| `id` | UUID | PK，账本事件 ID。 |
+| `request_id` | VARCHAR(255) | UNIQUE，HTTP 请求幂等键。 |
+| `staff_id` | VARCHAR(255) | 本次调用归属员工。 |
+| `quota_rule_id` | UUID | FK → `ai_agent_quota_rules.id`，命中的规则。 |
+| `model_pricing_id` | UUID | FK → `ai_agent_model_pricings.id`，命中的价格版本。 |
+| `model` | VARCHAR(255) | 模型名快照。 |
+| `status` | VARCHAR(20) | `reserved`、`settled`、`released` 或 `failed`。 |
+| `reserved_input_tokens` | BIGINT | 请求开始时预估的输入 Token。 |
+| `reserved_output_tokens` | BIGINT | 请求开始时按规则预占的最大输出 Token。 |
+| `reserved_cost_micro_usd` | BIGINT | 请求开始时预占成本。 |
+| `input_tokens` | BIGINT NULL | 最终实际输入 Token。 |
+| `cached_input_tokens` | BIGINT NULL | 最终实际缓存输入 Token。 |
+| `output_tokens` | BIGINT NULL | 最终实际输出 Token，含 reasoning。 |
+| `actual_cost_micro_usd` | BIGINT NULL | 最终实际成本。 |
+| `input_rate_snapshot` | BIGINT | 本次普通输入价格快照。 |
+| `cached_input_rate_snapshot` | BIGINT | 本次缓存输入价格快照。 |
+| `output_rate_snapshot` | BIGINT | 本次输出价格快照。 |
+| `conversation_id` | UUID NULL | FK → `ai_agent_conversation.id`，关联会话。 |
+| `created_at` / `settled_at` | TIMESTAMPTZ | 预占、结算或释放时间。 |
+| `error_code` | VARCHAR(100) NULL | 释放/失败时的内部原因，例如 `AGENT_FAILED`。 |
+
 ## 调用与结算流程
 
 ```text
