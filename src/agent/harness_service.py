@@ -111,6 +111,9 @@ class DeepAgentHarnessService:
             if mode == "messages":
                 message, metadata = value
                 if isinstance(message, AIMessage):
+                    usage = getattr(message, "usage_metadata", None)
+                    if isinstance(usage, dict):
+                        yield "usage", usage
                     for tool_call in message.tool_calls:
                         tool_name = _tool_name(tool_call.get("name"))
                         if tool_name is None:

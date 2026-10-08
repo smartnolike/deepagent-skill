@@ -23,3 +23,17 @@ async def require_api_token(
     if not secrets.compare_digest(authorization[len(prefix) :], expected):
         logger.warning("api_auth_failed reason=token_mismatch")
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Unauthorized")
+
+
+async def require_quota_admin_token(
+    request: Request, x_quota_admin_token: str | None = Header(default=None)
+) -> None:
+    """Protect quota administration separately from the browser-facing API token."""
+    configured = request.app.state.settings.quota_admin_token
+    if configured is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    if not x_quota_admin_token or not secrets.compare_digest(
+        x_quota_admin_token, configured.get_secret_value()
+    ):
+        logger.warning("quota_admin_auth_failed")
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Forbidden")

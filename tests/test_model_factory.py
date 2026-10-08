@@ -78,7 +78,7 @@ def test_google_genai_provider_uses_vertex_ai_configuration(monkeypatch: pytest.
 
     assert result["model"] == "gemini-2.5-pro"
     assert result["project"] == "hsbc-9445955-wselevuk01-dev"
-    assert result["location"] == "eu"
+    assert result["location"] == "global"
     assert result["vertexai"] is True
 
 

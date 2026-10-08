@@ -3,10 +3,14 @@
 # 覆盖鉴权、会话隔离、分页、SSE 工单链路和长期记忆隔离。
 
 import asyncio
+import datetime
 import uuid
+
+from sqlalchemy import select
 
 from database.models.agent.agent_run import AgentRun
 from database.models.agent.message import Message
+from database.models.agent.quota import ModelPricing, QuotaRule, StaffMonthlyUsage, StaffUsageEvent
 from database.models.agent.sandbox_artifact import SandboxArtifact
 from repositories.sandbox_artifact_repository import SandboxArtifactRepository
 from test_values import TEST_AUTH_TOKEN
@@ -48,6 +52,63 @@ def test_message_stream_uses_test_agent_injected_at_application_boundary(client)
         json={"staff_id": "staff-a", "content": "Please create a resource"},
     )
     assert "Test agent response." in response.text
+
+
+def test_default_quota_reserves_then_settles_and_rejects_the_next_request(client) -> None:
+    """A configured default policy applies without a per-staff assignment."""
+    headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
+
+    async def configure() -> None:
+        async with client.app.state.session_factory() as session:
+            session.add(
+                QuotaRule(
+                    code="default",
+                    name="Default",
+                    is_default=True,
+                    request_limit=1,
+                    max_output_tokens=100,
+                )
+            )
+            session.add(
+                ModelPricing(
+                    provider="openai",
+                    model="test-model",
+                    effective_from=datetime.date(2020, 1, 1),
+                    input_micro_usd_per_mtok=1_000_000,
+                    cached_input_micro_usd_per_mtok=100_000,
+                    output_micro_usd_per_mtok=2_000_000,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(configure())
+    conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
+    first = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "hello"},
+    )
+    assert first.status_code == 200
+
+    async def verify() -> None:
+        async with client.app.state.session_factory() as session:
+            counters = await session.get(StaffMonthlyUsage, ("staff-a", datetime.date.today().replace(day=1)))
+            event = await session.scalar(select(StaffUsageEvent))
+            assert counters is not None
+            assert counters.request_used == 1
+            assert counters.request_reserved == 0
+            assert event is not None
+            assert event.status == "settled"
+            assert event.actual_cost_micro_usd == event.reserved_cost_micro_usd
+
+    asyncio.run(verify())
+    second = client.post(
+        f"/agent/api/conversations/{conversation_id}/messages",
+        headers=headers,
+        json={"staff_id": "staff-a", "content": "again"},
+    )
+    assert second.status_code == 429
+    assert second.json()["code"] == "QUOTA_EXCEEDED"
 
 
 def test_message_stream_exposes_matched_tool_lifecycle_events(client, monkeypatch) -> None:

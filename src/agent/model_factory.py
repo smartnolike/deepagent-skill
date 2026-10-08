@@ -27,7 +27,7 @@ def create_chat_model(
         return ChatGoogleGenerativeAI(
             model=settings.model,
             project="hsbc-9445955-wselevuk01-dev",
-            location="eu",
+            location="global",
             vertexai=True,
             retries=1,
             request_timeout=300,

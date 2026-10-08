@@ -18,13 +18,19 @@ from core.errors import DomainError
 from core.request_context import bind_request_id
 from database.session import get_db_session
 from services.conversation_service import ConversationService
+from services.quota_service import QuotaService
 
 router = APIRouter(prefix="/api/conversations", dependencies=[Depends(require_api_token)])
 logger = logging.getLogger(__name__)
 
 
 def _service(request: Request, session=Depends(get_db_session)) -> ConversationService:
-    return ConversationService(session, request.app.state.agent_service, request.app.state.memory_service)
+    return ConversationService(
+        session,
+        request.app.state.agent_service,
+        request.app.state.memory_service,
+        QuotaService(session, request.app.state.settings.agent),
+    )
 
 
 @router.post("")
@@ -122,11 +128,16 @@ async def send_message(
 ) -> StreamingResponse:
     response_language = resolve_response_language(payload["content"], accept_language)
     request_id = request.state.request_id
+    quota_event = await service.reserve_message(
+        conversation_id, payload["staff_id"], payload["content"], request_id, response_language
+    )
 
     async def events() -> AsyncIterator[str]:
         with bind_request_id(request_id):
             try:
-                async for event, data in service.send(conversation_id, payload["staff_id"], payload["content"], response_language):
+                async for event, data in service.send(
+                    conversation_id, payload["staff_id"], payload["content"], response_language, quota_event
+                ):
                     yield f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
             except asyncio.CancelledError:
                 logger.info("sse_client_disconnected", extra={"fields": {"conversation_id": str(conversation_id)}})

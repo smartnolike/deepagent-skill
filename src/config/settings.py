@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     langfuse: LangfuseSettings = Field(default_factory=LangfuseSettings)
     database: DatabaseSettings
     api_auth_token: SecretStr
+    quota_admin_token: SecretStr | None = None
     mcp_servers: dict[str, McpServerSettings] = Field(default_factory=dict)
     log_level: str = "INFO"
     log_format: Literal["json", "text"] = "json"

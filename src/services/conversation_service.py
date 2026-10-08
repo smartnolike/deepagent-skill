@@ -17,6 +17,7 @@ from agent.harness_service import DeepAgentHarnessService
 from common.language import ResponseLanguage, resolve_response_language
 from core.errors import DomainError
 from database.models.agent.agent_run import AgentRun
+from database.models.agent.quota import StaffUsageEvent
 from database.models.agent.tool_confirmation import ToolConfirmation
 from repositories.agent_run_repository import AgentRunRepository
 from repositories.conversation_repository import ConversationRepository
@@ -26,6 +27,7 @@ from repositories.sandbox_artifact_repository import SandboxArtifactRepository
 from repositories.tool_confirmation_repository import ToolConfirmationRepository
 from services.danaan_memory import save_danaan_base_context_from_form
 from services.memory_service import MemoryService
+from services.quota_service import QuotaService, Usage, estimate_input_tokens, normalize_usage
 
 logger = logging.getLogger(__name__)
 _SENSITIVE_ARGUMENT_KEY_PARTS = frozenset({"password", "secret", "token", "authorization", "credential", "api_key"})
@@ -35,7 +37,11 @@ class ConversationService:
     """Coordinate persisted chat history, Agent execution, and run lifecycle."""
 
     def __init__(
-        self, session: AsyncSession, agent_service: DeepAgentHarnessService, memory_service: MemoryService
+        self,
+        session: AsyncSession,
+        agent_service: DeepAgentHarnessService,
+        memory_service: MemoryService,
+        quota_service: QuotaService | None = None,
     ) -> None:
         self._session = session
         self._conversations = ConversationRepository(session)
@@ -45,6 +51,23 @@ class ConversationService:
         self._confirmations = ToolConfirmationRepository(session)
         self._agent_service = agent_service
         self._memory_service = memory_service
+        self._quota_service = quota_service
+
+    async def reserve_message(
+        self,
+        conversation_id: uuid.UUID,
+        staff_id: str,
+        content: str,
+        request_id: str,
+        response_language: ResponseLanguage,
+    ) -> StaffUsageEvent | None:
+        """Admit a message before HTTP starts its SSE response."""
+        await self._require_conversation(conversation_id, staff_id, response_language)
+        if self._quota_service is None:
+            return None
+        return await self._quota_service.reserve(
+            staff_id, request_id, conversation_id, estimate_input_tokens(content)
+        )
 
     async def create(self, staff_id: str, title: str | None) -> dict[str, str | None]:
         conversation = await self._conversations.create(staff_id, title)
@@ -177,7 +200,12 @@ class ConversationService:
         return grouped
 
     async def send(
-        self, conversation_id: uuid.UUID, staff_id: str, content: str, response_language: ResponseLanguage
+        self,
+        conversation_id: uuid.UUID,
+        staff_id: str,
+        content: str,
+        response_language: ResponseLanguage,
+        quota_event: StaffUsageEvent | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
         await self._require_conversation(conversation_id, staff_id, response_language)
         previous_history = await self._messages.list(conversation_id)
@@ -190,10 +218,16 @@ class ConversationService:
         logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
         history = await self._messages.list(conversation_id)
         answer_parts: list[str] = []
+        total_usage = Usage(0, 0, 0)
+        usage_seen = False
         try:
             async for event, payload in self._agent_service.reply(
                 conversation_id, staff_id, run.id, content, history, response_language
             ):
+                if event == "usage":
+                    total_usage = _add_usage(total_usage, normalize_usage(payload))
+                    usage_seen = True
+                    continue
                 if event == "token":
                     answer_parts.append(payload["content"])
                 if event in {"confirmation_required", "form_required"}:
@@ -202,6 +236,7 @@ class ConversationService:
                         payload = {key: value for key, value in payload.items() if key != "arguments"}
                         payload = {**payload, **self._confirmation_payload(confirmation)}
                     await self._runs.await_confirmation(run)
+                    await self._settle_quota(quota_event, total_usage if usage_seen else None)
                     logger.info("agent_run_awaiting_confirmation agent_run_id=%s", run.id)
                     yield event, payload
                     return
@@ -209,9 +244,11 @@ class ConversationService:
             assistant = await self._messages.create(conversation_id, "assistant", "".join(answer_parts))
             await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
+            await self._settle_quota(quota_event, total_usage if usage_seen else None)
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
         except asyncio.CancelledError:
+            await self._release_quota(quota_event, "CLIENT_CANCELLED")
             await self._mark_run_cancelled(run, conversation_id)
             raise
         except Exception as exc:
@@ -229,7 +266,16 @@ class ConversationService:
                 },
             )
             await self._mark_run_failed(run, conversation_id, error_id)
+            await self._release_quota(quota_event, "AGENT_FAILED")
             raise
+
+    async def _settle_quota(self, quota_event: StaffUsageEvent | None, usage: Usage | None) -> None:
+        if self._quota_service is not None:
+            await self._quota_service.settle(quota_event, usage)
+
+    async def _release_quota(self, quota_event: StaffUsageEvent | None, error_code: str) -> None:
+        if self._quota_service is not None:
+            await self._quota_service.release(quota_event, error_code)
 
     async def confirm_tool(
         self,
@@ -434,3 +480,11 @@ def _language_from_history(messages: list[object]) -> ResponseLanguage | None:
         if getattr(message, "role", None) == "user":
             language = resolve_response_language(getattr(message, "content", None), previous_language=language)
     return language
+
+
+def _add_usage(left: Usage, right: Usage) -> Usage:
+    return Usage(
+        input_tokens=left.input_tokens + right.input_tokens,
+        cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
+        output_tokens=left.output_tokens + right.output_tokens,
+    )
