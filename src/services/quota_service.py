@@ -25,10 +25,11 @@ _MICRO_USD_PER_MILLION = 1_000_000
 
 @dataclass(frozen=True)
 class Usage:
-    """Normalized Vertex usage fields; output must include reasoning tokens when supplied by the SDK."""
+    """Normalized provider usage; output must include reasoning tokens when supplied separately."""
 
     input_tokens: int
     cached_input_tokens: int
+    cache_write_tokens: int
     output_tokens: int
 
 
@@ -70,8 +71,9 @@ class QuotaService:
                 "An output, total-token, or cost limit requires max_output_tokens",
                 503,
             )
+        reserved_cache_write = estimated_input_tokens if pricing.cache_write_micro_usd_per_mtok is not None else 0
         reserved_cost = _cost_micro_usd(
-            estimated_input_tokens, 0, reserved_output, pricing
+            estimated_input_tokens, 0, reserved_cache_write, reserved_output, pricing
         )
         month = _period_month(datetime.now(UTC).date())
         usage = await self._session.scalar(
@@ -97,10 +99,14 @@ class QuotaService:
             model_pricing_id=pricing.id,
             model=pricing.model,
             reserved_input_tokens=estimated_input_tokens,
+            reserved_cache_write_tokens=reserved_cache_write,
             reserved_output_tokens=reserved_output,
             reserved_cost_micro_usd=reserved_cost,
             input_rate_snapshot=pricing.input_micro_usd_per_mtok,
             cached_input_rate_snapshot=pricing.cached_input_micro_usd_per_mtok,
+            cache_write_rate_snapshot=(
+                pricing.cache_write_micro_usd_per_mtok or pricing.input_micro_usd_per_mtok
+            ),
             output_rate_snapshot=pricing.output_micro_usd_per_mtok,
             conversation_id=conversation_id,
         )
@@ -126,7 +132,12 @@ class QuotaService:
         )
         if counters is None:
             raise RuntimeError("Quota counters missing for a reserved usage event")
-        actual = actual or Usage(event.reserved_input_tokens, 0, event.reserved_output_tokens)
+        actual = actual or Usage(
+            event.reserved_input_tokens,
+            0,
+            event.reserved_cache_write_tokens,
+            event.reserved_output_tokens,
+        )
         actual_cost = _cost_micro_usd_from_snapshots(actual, event)
         counters.request_reserved -= 1
         counters.input_tokens_reserved -= event.reserved_input_tokens
@@ -141,6 +152,7 @@ class QuotaService:
         event.status = "settled"
         event.input_tokens = actual.input_tokens
         event.cached_input_tokens = actual.cached_input_tokens
+        event.cache_write_tokens = actual.cache_write_tokens
         event.output_tokens = actual.output_tokens
         event.actual_cost_micro_usd = actual_cost
         event.settled_at = datetime.now(UTC)
@@ -216,13 +228,22 @@ def normalize_usage(payload: dict[str, object]) -> Usage:
     details = payload.get("input_token_details")
     details = details if isinstance(details, dict) else {}
     cached = details.get("cache_read") or details.get("cached_tokens") or payload.get("cached_input_tokens") or 0
+    cache_write = (
+        details.get("cache_creation")
+        or details.get("cache_write_tokens")
+        or payload.get("cache_write_tokens")
+        or 0
+    )
     input_tokens = max(0, int(payload.get("input_tokens", payload.get("prompt_token_count", 0)) or 0))
     response_tokens = int(payload.get("output_tokens", payload.get("candidates_token_count", 0)) or 0)
     # Vertex reports hidden reasoning separately. It is billable and belongs in the output bucket.
     thoughts_tokens = int(payload.get("thoughts_token_count", payload.get("thoughts_tokens", 0)) or 0)
+    cached_input_tokens = min(input_tokens, max(0, int(cached or 0)))
+    cache_write_tokens = min(input_tokens - cached_input_tokens, max(0, int(cache_write or 0)))
     return Usage(
         input_tokens=input_tokens,
-        cached_input_tokens=min(input_tokens, max(0, int(cached or 0))),
+        cached_input_tokens=cached_input_tokens,
+        cache_write_tokens=cache_write_tokens,
         output_tokens=max(0, response_tokens + thoughts_tokens),
     )
 
@@ -231,11 +252,20 @@ def _period_month(value: date) -> date:
     return value.replace(day=1)
 
 
-def _cost_micro_usd(input_tokens: int, cached_tokens: int, output_tokens: int, pricing: ModelPricing) -> int:
+def _cost_micro_usd(
+    input_tokens: int,
+    cached_tokens: int,
+    cache_write_tokens: int,
+    output_tokens: int,
+    pricing: ModelPricing,
+) -> int:
+    normal_input_tokens = input_tokens - cached_tokens - cache_write_tokens
+    cache_write_rate = pricing.cache_write_micro_usd_per_mtok or pricing.input_micro_usd_per_mtok
     return math.ceil(
         (
-            (input_tokens - cached_tokens) * pricing.input_micro_usd_per_mtok
+            normal_input_tokens * pricing.input_micro_usd_per_mtok
             + cached_tokens * pricing.cached_input_micro_usd_per_mtok
+            + cache_write_tokens * cache_write_rate
             + output_tokens * pricing.output_micro_usd_per_mtok
         )
         / _MICRO_USD_PER_MILLION
@@ -245,8 +275,9 @@ def _cost_micro_usd(input_tokens: int, cached_tokens: int, output_tokens: int, p
 def _cost_micro_usd_from_snapshots(actual: Usage, event: StaffUsageEvent) -> int:
     return math.ceil(
         (
-            (actual.input_tokens - actual.cached_input_tokens) * event.input_rate_snapshot
+            (actual.input_tokens - actual.cached_input_tokens - actual.cache_write_tokens) * event.input_rate_snapshot
             + actual.cached_input_tokens * event.cached_input_rate_snapshot
+            + actual.cache_write_tokens * event.cache_write_rate_snapshot
             + actual.output_tokens * event.output_rate_snapshot
         )
         / _MICRO_USD_PER_MILLION

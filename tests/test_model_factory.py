@@ -27,6 +27,7 @@ def test_openai_provider_uses_fixed_api_key(monkeypatch: pytest.MonkeyPatch) -> 
 
     assert model["model"] == "gpt-4.1-mini"
     assert model["api_key"] == TEST_API_KEY
+    assert model["stream_usage"] is True
     assert model["http_async_client"] is expected_async_client
 
 
@@ -57,6 +58,7 @@ def test_openai_compatible_provider_uses_custom_base_url(monkeypatch: pytest.Mon
     )
 
     assert model["base_url"] == "https://api.deepseek.com"
+    assert model["stream_usage"] is False
 
 
 def test_internal_provider_requires_dynamic_token_configuration() -> None:
@@ -73,11 +75,16 @@ def test_google_genai_provider_uses_vertex_ai_configuration(monkeypatch: pytest.
 
     monkeypatch.setattr(model_factory, "ChatGoogleGenerativeAI", chat_google_probe)
     result = model_factory.create_chat_model(
-        AgentSettings(provider="google_genai", model="gemini-2.5-pro"), None
+        AgentSettings(
+            provider="google_genai",
+            model="gemini-2.5-pro",
+            project="test-vertex-project",
+        ),
+        None,
     )
 
     assert result["model"] == "gemini-2.5-pro"
-    assert result["project"] == "hsbc-9445955-wselevuk01-dev"
+    assert result["project"] == "test-vertex-project"
     assert result["location"] == "global"
     assert result["vertexai"] is True
 

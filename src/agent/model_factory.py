@@ -26,7 +26,7 @@ def create_chat_model(
             client_args["proxy"] = "http://10.98.40.131:3128"
         return ChatGoogleGenerativeAI(
             model=settings.model,
-            project="hsbc-9445955-wselevuk01-dev",
+            project=settings.project,
             location="global",
             vertexai=True,
             retries=1,
@@ -61,6 +61,8 @@ def create_chat_model(
         api_key=api_key,
         base_url= base_url,
         streaming=True,
+        # OpenAI 在流式响应的最后一个 chunk 返回 usage；兼容网关未必支持 stream_options。
+        stream_usage=settings.provider == "openai",
         max_retries= 1,
         http_async_client=httpx_client.async_client
     )

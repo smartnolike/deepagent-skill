@@ -218,7 +218,7 @@ class ConversationService:
         logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
         history = await self._messages.list(conversation_id)
         answer_parts: list[str] = []
-        total_usage = Usage(0, 0, 0)
+        total_usage = Usage(0, 0, 0, 0)
         usage_seen = False
         try:
             async for event, payload in self._agent_service.reply(
@@ -486,5 +486,6 @@ def _add_usage(left: Usage, right: Usage) -> Usage:
     return Usage(
         input_tokens=left.input_tokens + right.input_tokens,
         cached_input_tokens=left.cached_input_tokens + right.cached_input_tokens,
+        cache_write_tokens=left.cache_write_tokens + right.cache_write_tokens,
         output_tokens=left.output_tokens + right.output_tokens,
     )

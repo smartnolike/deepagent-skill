@@ -6,7 +6,8 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 -- 当前全局 Gemini 3.8 Flash 价格版本：
--- 输入 $0.75 / 1M Token，缓存输入 $0.075 / 1M Token，输出（含 reasoning）$3.75 / 1M Token。
+-- 输入 $0.75 / 1M Token，缓存读取 $0.075 / 1M Token，输出（含 reasoning）$3.75 / 1M Token。
+-- Gemini 隐式缓存写入没有独立加价，cache_write_micro_usd_per_mtok 设为 NULL，结算时按普通输入价处理。
 -- 价格用 micro-USD / 1M Token 保存，故分别为 750000、75000、3750000。
 INSERT INTO ai_agent_model_pricings (
     id,
@@ -16,6 +17,7 @@ INSERT INTO ai_agent_model_pricings (
     effective_to,
     input_micro_usd_per_mtok,
     cached_input_micro_usd_per_mtok,
+    cache_write_micro_usd_per_mtok,
     output_micro_usd_per_mtok,
     enabled
 )
@@ -27,6 +29,7 @@ VALUES (
     DATE '2026-12-31',
     750000,
     75000,
+    NULL,
     3750000,
     TRUE
 )
@@ -35,6 +38,7 @@ DO UPDATE SET
     effective_to = EXCLUDED.effective_to,
     input_micro_usd_per_mtok = EXCLUDED.input_micro_usd_per_mtok,
     cached_input_micro_usd_per_mtok = EXCLUDED.cached_input_micro_usd_per_mtok,
+    cache_write_micro_usd_per_mtok = EXCLUDED.cache_write_micro_usd_per_mtok,
     output_micro_usd_per_mtok = EXCLUDED.output_micro_usd_per_mtok,
     enabled = EXCLUDED.enabled;
 

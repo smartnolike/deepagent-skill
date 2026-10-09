@@ -33,5 +33,6 @@ class ModelPricingRequest(BaseModel):
     effective_to: date | None = None
     input_micro_usd_per_mtok: int = Field(ge=0)
     cached_input_micro_usd_per_mtok: int = Field(ge=0)
+    cache_write_micro_usd_per_mtok: int | None = Field(default=None, ge=0)
     output_micro_usd_per_mtok: int = Field(ge=0)
     enabled: bool = True

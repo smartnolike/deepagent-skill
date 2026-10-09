@@ -5,6 +5,7 @@ agent:
   # DeepSeek 使用 OpenAI-compatible API；启动前设置 DEEPSEEK_API_KEY。
   base_url: https://api.deepseek.com
   api_key: ${DEEPSEEK_API_KEY}
+  # Vertex Gemini 切换模板：provider: google_genai、model: gemini-3.8-flash、project: ${VERTEX_AI_PROJECT}
   #
   # ===== 公司内部模型切换模板（保持注释，按块替换上面的 provider/model/base_url/api_key）=====
   # provider: internal

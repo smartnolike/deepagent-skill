@@ -109,9 +109,9 @@ res_template_id DESC` 取最新 `template_content`。该表由 Danaan 管理，�
 `danaan__external_resource_add` 的 `creator` 不由模型或前端填写。MCP 配置会从当前运行时的 `staff_id`
 强制注入该字段，并固定注入空的 `creatorName` / `creatorEmail`；这些内部字段不会出现在 Tool schema、表单或确认摘要中。
 
-## 模型 Provider：内部动态 Token、OpenAI 或 OpenAI-compatible 外部模型
+## 模型 Provider：内部动态 Token、OpenAI、OpenAI-compatible 或 Vertex Gemini
 
-通过 `agent.provider` 选择模型来源：`internal`、`openai` 或 `openai_compatible`。认证方式互斥：
+通过 `agent.provider` 选择模型来源：`internal`、`openai`、`openai_compatible` 或 `google_genai`。认证方式互斥：
 
 ```yaml
 # 公司内部 OpenAI-compatible 模型
@@ -163,9 +163,18 @@ agent:
   api_key: ${DEEPSEEK_API_KEY}
 ```
 
+```yaml
+# Vertex AI Gemini（location 固定为 global）
+agent:
+  provider: google_genai
+  model: gemini-3.8-flash
+  project: ${VERTEX_AI_PROJECT}
+```
+
 `openai` Provider 不接受 `base_url` 或 `token_auth`，并且必须提供固定 `api_key`；它不会调用公司内部
 Translator 服务。`openai_compatible` 必须同时提供固定 `api_key` 和 `base_url`；`internal` Provider 必须提供
-`base_url` 与 `token_auth`。
+`base_url` 与 `token_auth`。`google_genai` 使用 Vertex AI，必须提供 `project`，且不接受 `base_url`；调用位置固定为
+`global`。
 
 内部模型网关使用 OpenAI 协议但需要动态 Token 时，在 `agent` 下配置 `base_url` 和 `token_auth`；示例 YAML
 已包含对应字段。服务会在**建立一条新的模型 HTTP 请求前**调用 `translator_url`，并把返回的 Token

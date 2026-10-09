@@ -324,8 +324,23 @@ def test_google_genai_provider_rejects_base_url() -> None:
                 "agent": {
                     "provider": "google_genai",
                     "model": "gemini-2.5-pro",
+                    "project": "test-vertex-project",
                     "base_url": "https://generativelanguage.googleapis.com",
                 },
+            }
+        )
+
+
+def test_google_genai_provider_requires_project() -> None:
+    with pytest.raises(ValidationError, match="agent.project"):
+        Settings.model_validate(
+            {
+                "agent_env": "local",
+                "allow_test_doubles": True,
+                "database": {"host": "x", "name": "x", "user": "x", "password": TEST_PASSWORD},
+                "api_auth_token": TEST_AUTH_TOKEN,
+                "mcp_servers": {},
+                "agent": {"provider": "google_genai", "model": "gemini-2.5-pro"},
             }
         )
 
@@ -341,6 +356,7 @@ def test_google_genai_provider_allows_token_auth() -> None:
             "agent": {
                 "provider": "google_genai",
                 "model": "gemini-2.5-pro",
+                "project": "test-vertex-project",
                 "token_auth": {
                     "translator_url": "https://translator.example/token",
                     "service_account_name": "svc",

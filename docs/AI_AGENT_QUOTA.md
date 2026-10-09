@@ -88,7 +88,8 @@ staff_id + period_month
 | `effective_from` | DATE | `2026-08-13` | 此价格开始生效的日期。 |
 | `effective_to` | DATE NULL | `2026-12-31` | 此价格最后有效日期；`NULL` 代表持续有效。 |
 | `input_micro_usd_per_mtok` | BIGINT | `750000` | 普通输入每 100 万 Token 的价格。 |
-| `cached_input_micro_usd_per_mtok` | BIGINT | `75000` | 缓存命中输入每 100 万 Token 的价格。 |
+| `cached_input_micro_usd_per_mtok` | BIGINT | `75000` | 缓存读取（cache read / cached input）每 100 万 Token 的价格。 |
+| `cache_write_micro_usd_per_mtok` | BIGINT NULL | `275000` | 缓存写入（cache creation）每 100 万 Token 的价格；`NULL` 代表没有独立写入价，按普通输入价计费。Gemini 的隐式缓存写入应设为 `NULL`。 |
 | `output_micro_usd_per_mtok` | BIGINT | `3750000` | 输出每 100 万 Token 的价格，包含 reasoning。 |
 | `enabled` | BOOLEAN | 默认 `true` | 是否允许本价格版本参与匹配。 |
 | `created_at` | TIMESTAMPTZ | 自动维护 | 价格记录创建时间。 |
@@ -135,14 +136,17 @@ staff_id + period_month
 | `model` | VARCHAR(255) | 模型名快照。 |
 | `status` | VARCHAR(20) | `reserved`、`settled`、`released` 或 `failed`。 |
 | `reserved_input_tokens` | BIGINT | 请求开始时预估的输入 Token。 |
+| `reserved_cache_write_tokens` | BIGINT | 请求开始时为有独立缓存写入价的模型保守预占的写入 Token。 |
 | `reserved_output_tokens` | BIGINT | 请求开始时按规则预占的最大输出 Token。 |
 | `reserved_cost_micro_usd` | BIGINT | 请求开始时预占成本。 |
 | `input_tokens` | BIGINT NULL | 最终实际输入 Token。 |
-| `cached_input_tokens` | BIGINT NULL | 最终实际缓存输入 Token。 |
+| `cached_input_tokens` | BIGINT NULL | 最终实际缓存读取 Token。 |
+| `cache_write_tokens` | BIGINT NULL | 最终实际缓存写入 Token。 |
 | `output_tokens` | BIGINT NULL | 最终实际输出 Token，含 reasoning。 |
 | `actual_cost_micro_usd` | BIGINT NULL | 最终实际成本。 |
 | `input_rate_snapshot` | BIGINT | 本次普通输入价格快照。 |
-| `cached_input_rate_snapshot` | BIGINT | 本次缓存输入价格快照。 |
+| `cached_input_rate_snapshot` | BIGINT | 本次缓存读取价格快照。 |
+| `cache_write_rate_snapshot` | BIGINT | 本次缓存写入价格快照；没有独立写入价时等于普通输入价格。 |
 | `output_rate_snapshot` | BIGINT | 本次输出价格快照。 |
 | `conversation_id` | UUID NULL | FK → `ai_agent_conversation.id`，关联会话。 |
 | `created_at` / `settled_at` | TIMESTAMPTZ | 预占、结算或释放时间。 |
@@ -156,15 +160,17 @@ POST /messages
   → 读取当前 provider + model 的有效价格
   → 预估输入并按 max_output_tokens 预占所有已启用维度
   → 通过后才启动 SSE / 模型调用
-  → 从 Vertex usage_metadata 收集输入、缓存输入、输出及 reasoning Token
+  → 从模型 usage_metadata 收集输入、缓存读取、缓存写入、输出及 reasoning Token
   → 按实际使用量结算；未取得用量时保守地按预占值结算
 ```
 
-响应中的 reasoning Token 会计入输出 Token。每次账本事件保存命中的价格快照，因此后续修改价格不会影响历史账目。
+响应中的 reasoning Token 会计入输出 Token。ChatOpenAI 的 `output_tokens` 已包含 reasoning，不能再重复相加；Vertex 的隐藏 reasoning 则单独合并到输出。每次账本事件保存命中的价格快照，因此后续修改价格不会影响历史账目。
 
 ## 模型与价格配置
 
 Vertex AI 的调用位置固定为 `global`，但额度价格表不再存储 `location` 字段。价格表的 `provider` 与 `agent.provider` 保持一致，例如 Vertex Gemini 使用 `google_genai`。切换模型时，先新增该模型的价格记录，再修改 `agent.model`；找不到当前模型有效价格时，配置了额度规则的请求会返回 `503 MODEL_PRICING_NOT_CONFIGURED`。
+
+OpenAI 官方 provider 的流式调用会开启 `stream_usage`，以取得最终 usage chunk：`input_token_details.cache_read` 是缓存读取，`cache_creation` 是缓存写入。Gemini 通常只报告缓存读取；其隐式上下文缓存的写入不加价，因此该模型价格的 `cache_write_micro_usd_per_mtok` 留为 `NULL`。
 
 模型价格应新增版本，而不是覆盖历史行：使用 `effective_from` 和 `effective_to` 表示价格生效期。
 

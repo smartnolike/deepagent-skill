@@ -14,6 +14,7 @@ class AgentSettings(BaseModel):
 
     provider: Literal["internal", "openai", "openai_compatible", "google_genai"] = "internal"
     model: str | None = None
+    project: str | None = None
     base_url: str | None = None
     api_key: SecretStr | None = None
     token_auth: TokenAuthSettings | None = None
@@ -36,4 +37,6 @@ class AgentSettings(BaseModel):
             raise ValueError("agent.base_url is required when agent.provider is openai_compatible")
         if self.provider == "google_genai" and self.base_url is not None:
             raise ValueError("agent.base_url is not supported when agent.provider is google_genai")
+        if self.provider == "google_genai" and not self.project:
+            raise ValueError("agent.project is required when agent.provider is google_genai")
         return self
