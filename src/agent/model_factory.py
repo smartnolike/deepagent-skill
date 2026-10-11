@@ -59,10 +59,10 @@ def create_chat_model(
     return ChatOpenAI(
         model=settings.model,
         api_key=api_key,
-        base_url= base_url,
+        base_url=base_url,
         streaming=True,
         # OpenAI 在流式响应的最后一个 chunk 返回 usage；兼容网关未必支持 stream_options。
         stream_usage=settings.provider == "openai",
-        max_retries= 1,
+        max_retries=1,
         http_async_client=httpx_client.async_client
     )
