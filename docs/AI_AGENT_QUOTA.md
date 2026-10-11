@@ -184,10 +184,42 @@ quota_admin_token: ${QUOTA_ADMIN_TOKEN}
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
+| `GET` | `/agent/api/quotas/current?staff_id={staff_id}` | 查询员工当前月份的额度、已结算、预占和剩余额度；仅需要普通 Bearer Token。 |
 | `PUT` | `/agent/api/quotas/rules/{code}` | 创建或更新规则，并以 `staff_ids` 数组整体替换该规则的员工绑定。 |
 | `POST` | `/agent/api/quotas/model-pricings` | 新增模型价格版本。 |
 
 若未配置 `quota_admin_token`，管理接口返回 `404`，避免被普通前端调用。
+
+### 当前额度查询
+
+`GET /agent/api/quotas/current?staff_id=staff_001` 不写入数据库，不会创建月度汇总行，也不会修改正在执行请求的预占。它和实际拦截共用同一规则选择顺序与月度统计口径，`consumed = used + reserved`。
+
+```json
+{
+  "staff_id": "staff_001",
+  "period_month": "2026-10-01",
+  "quota_configured": true,
+  "quota_enabled": true,
+  "rule": {
+    "code": "default",
+    "name": "默认员工额度",
+    "is_default": true,
+    "enabled": true
+  },
+  "limits": {
+    "requests": {"limit": 1000, "used": 128, "reserved": 1, "consumed": 129, "remaining": 871},
+    "input_tokens": {"limit": null, "used": 850000, "reserved": 3200, "consumed": 853200, "remaining": null},
+    "output_tokens": {"limit": null, "used": 65000, "reserved": 4000, "consumed": 69000, "remaining": null},
+    "total_tokens": {"limit": 1000000, "used": 915000, "reserved": 7200, "consumed": 922200, "remaining": 77800},
+    "cost": {"unit": "micro_usd", "limit": 10000000, "used": 7250000, "reserved": 18000, "consumed": 7268000, "remaining": 2732000}
+  },
+  "last_updated_at": "2026-10-11T08:00:00+00:00"
+}
+```
+
+`limit` 和 `remaining` 为 `null` 代表该维度不限额；费用始终使用整数 `micro_usd`，避免 API 传输浮点金额。若没有匹配规则，则返回 `quota_configured: false`、`limits: null`；若规则已禁用，仍返回历史用量，但 `quota_enabled: false`。
+
+当前 MVP 的 `staff_id` 仍由请求参数提供，因此该接口只具备与现有会话 API 相同的访问边界。接入 SSO/JWT 后，应改为 `/api/quotas/me` 并从已验证的身份 claim 获取员工 ID，不能信任浏览器传入的任意 `staff_id`。
 
 ## 额度拒绝结果
 

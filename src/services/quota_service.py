@@ -184,6 +184,46 @@ class QuotaService:
         event.settled_at = datetime.now(UTC)
         await self._session.commit()
 
+    async def current_summary(self, staff_id: str) -> dict[str, object]:
+        """Return the current-month quota view without creating counters or changing reservations."""
+        month = _period_month(datetime.now(UTC).date())
+        rule = await self._rule_for_staff(staff_id)
+        if rule is None:
+            return {
+                "staff_id": staff_id,
+                "period_month": month.isoformat(),
+                "quota_configured": False,
+                "quota_enabled": False,
+                "rule": None,
+                "limits": None,
+                "last_updated_at": None,
+            }
+
+        counters = await self._session.get(StaffMonthlyUsage, (staff_id, month))
+        return {
+            "staff_id": staff_id,
+            "period_month": month.isoformat(),
+            "quota_configured": True,
+            "quota_enabled": rule.enabled,
+            "rule": {
+                "code": rule.code,
+                "name": rule.name,
+                "is_default": rule.is_default,
+                "enabled": rule.enabled,
+            },
+            "limits": {
+                "requests": _dimension(rule.request_limit, counters, "request"),
+                "input_tokens": _dimension(rule.input_token_limit, counters, "input_tokens"),
+                "output_tokens": _dimension(rule.output_token_limit, counters, "output_tokens"),
+                "total_tokens": _dimension(rule.total_token_limit, counters, "total_tokens"),
+                "cost": {
+                    **_dimension(rule.cost_micro_usd_limit, counters, "cost_micro_usd"),
+                    "unit": "micro_usd",
+                },
+            },
+            "last_updated_at": counters.updated_at.isoformat() if counters and counters.updated_at else None,
+        }
+
     async def _rule_for_staff(self, staff_id: str) -> QuotaRule | None:
         rule = await self._session.scalar(
             select(QuotaRule)
@@ -250,6 +290,21 @@ def normalize_usage(payload: dict[str, object]) -> Usage:
 
 def _period_month(value: date) -> date:
     return value.replace(day=1)
+
+
+def _dimension(
+    limit: int | None, counters: StaffMonthlyUsage | None, counter_prefix: str
+) -> dict[str, int | None]:
+    used = int(getattr(counters, f"{counter_prefix}_used", 0) or 0)
+    reserved = int(getattr(counters, f"{counter_prefix}_reserved", 0) or 0)
+    consumed = used + reserved
+    return {
+        "limit": limit,
+        "used": used,
+        "reserved": reserved,
+        "consumed": consumed,
+        "remaining": max(0, limit - consumed) if limit is not None else None,
+    }
 
 
 def _cost_micro_usd(
