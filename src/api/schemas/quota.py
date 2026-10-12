@@ -1,6 +1,7 @@
 """Validated payloads for restricted quota administration APIs."""
 
 from datetime import date
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -10,6 +11,7 @@ class QuotaRuleRequest(BaseModel):
     staff_ids: list[str] = Field(default_factory=list)
     is_default: bool = False
     enabled: bool = True
+    mode: Literal["soft", "strict"] = "soft"
     request_limit: int | None = Field(default=None, ge=0)
     input_token_limit: int | None = Field(default=None, ge=0)
     output_token_limit: int | None = Field(default=None, ge=0)

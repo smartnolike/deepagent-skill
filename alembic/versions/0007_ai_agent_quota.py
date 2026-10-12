@@ -19,6 +19,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("is_default", sa.Boolean(), nullable=False, server_default=sa.false()),
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
+        sa.Column("mode", sa.String(10), nullable=False, server_default="soft"),
         sa.Column("request_limit", sa.BigInteger(), nullable=True),
         sa.Column("input_token_limit", sa.BigInteger(), nullable=True),
         sa.Column("output_token_limit", sa.BigInteger(), nullable=True),
@@ -27,6 +28,7 @@ def upgrade() -> None:
         sa.Column("max_output_tokens", sa.BigInteger(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.CheckConstraint("mode IN ('soft', 'strict')", name="ck_ai_agent_quota_rules_mode"),
     )
     op.create_index("ix_ai_agent_quota_rules_code", "ai_agent_quota_rules", ["code"])
     op.create_index("ix_ai_agent_quota_rules_is_default", "ai_agent_quota_rules", ["is_default"])
@@ -119,6 +121,13 @@ def upgrade() -> None:
     )
     for column in ("request_id", "staff_id", "quota_rule_id", "model_pricing_id", "status", "conversation_id"):
         op.create_index(f"ix_ai_agent_staff_usage_events_{column}", "ai_agent_staff_usage_events", [column])
+    op.create_index(
+        "uq_ai_agent_staff_usage_events_active_staff",
+        "ai_agent_staff_usage_events",
+        ["staff_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'reserved'"),
+    )
 
 
 def downgrade() -> None:

@@ -3,7 +3,7 @@
 import uuid
 from datetime import date, datetime
 
-from sqlalchemy import BigInteger, Boolean, Date, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Date, DateTime, ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,12 +14,14 @@ class QuotaRule(Base):
     """A reusable monthly quota policy; null limits mean that dimension is unlimited."""
 
     __tablename__ = "ai_agent_quota_rules"
+    __table_args__ = (CheckConstraint("mode IN ('soft', 'strict')", name="ck_ai_agent_quota_rules_mode"),)
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     code: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     is_default: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    mode: Mapped[str] = mapped_column(String(10), default="soft")
     request_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     input_token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     output_token_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
@@ -92,6 +94,15 @@ class StaffUsageEvent(Base):
     """Idempotent per-invocation ledger record and historical price snapshot."""
 
     __tablename__ = "ai_agent_staff_usage_events"
+    __table_args__ = (
+        Index(
+            "uq_ai_agent_staff_usage_events_active_staff",
+            "staff_id",
+            unique=True,
+            postgresql_where=text("status = 'reserved'"),
+            sqlite_where=text("status = 'reserved'"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     request_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)

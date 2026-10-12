@@ -19,6 +19,8 @@ Authorization: Bearer {api_token}
 | --- | --- |
 | `quota_configured: false` | 隐藏额度卡，或显示“未启用额度控制”。 |
 | `quota_enabled: false` | 显示“AI 使用已被管理员禁用”，并禁用输入框。 |
+| `rule.mode: soft` | 额度显示为 0 时，本次已发起请求仍可能完成；后续请求以服务端响应为准。 |
+| `rule.mode: strict` | 剩余额度不足以覆盖本次最大预占时，服务端会提前拒绝。 |
 | `limit: null` | 不展示该维度，因为它没有上限。 |
 | `remaining > 0` | 显示 `consumed / limit`、进度条和剩余量。 |
 | `remaining = 0` | 红色提示“本月额度已用尽”；输入框可提前禁用，但仍以服务端 `429` 为最终判断。 |
@@ -36,6 +38,8 @@ Authorization: Bearer {api_token}
 
 请求进行中应保留最近一次成功数据，不要把额度卡重置为空。多个刷新请求并发时，只应用最后发出的请求结果，或使用 `AbortController` 取消旧请求。
 
+同一 `staff_id` 同时只允许一条模型请求；如果消息接口返回 `409 REQUEST_IN_PROGRESS`，保留当前输入并提示“当前已有 AI 请求正在处理中，请等待完成后再发送”。
+
 ## 格式化与阈值
 
 - Token 使用 `Intl.NumberFormat` 分组；超过 10,000 时可辅助显示 `85.3K`。
@@ -47,5 +51,6 @@ Authorization: Bearer {api_token}
 
 - 查询接口 `401`：按现有登录/Token 刷新流程处理。
 - 消息接口 `429` 且 `code = QUOTA_EXCEEDED`：显示“本月 AI 使用额度已用尽”，并立即刷新额度卡。
+- 消息接口 `409` 且 `code = REQUEST_IN_PROGRESS`：显示“当前已有 AI 请求正在处理中”，不丢弃用户输入。
 - 规则禁用时，消息接口可能返回 `403 QUOTA_DISABLED`：显示管理员禁用提示。
 - 当前接口允许传入 `staff_id`，仅适用于现有 MVP 的静态 Bearer Token 模式。接入 SSO/JWT 后应迁移为 `/api/quotas/me`，员工 ID 由后端身份 claim 决定。

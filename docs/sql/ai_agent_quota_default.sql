@@ -42,7 +42,7 @@ DO UPDATE SET
     output_micro_usd_per_mtok = EXCLUDED.output_micro_usd_per_mtok,
     enabled = EXCLUDED.enabled;
 
--- 默认规则：每员工每月最多 1,000 次请求、1,000,000 总 Token、$10；单次最多 4,000 输出 Token。
+-- 默认规则：soft 模式；每员工每月最多 1,000 次请求、1,000,000 总 Token、$10；单次最多预占 4,000 输出 Token。
 -- 将任一额度字段设为 NULL，即不限制该维度。
 INSERT INTO ai_agent_quota_rules (
     id,
@@ -50,6 +50,7 @@ INSERT INTO ai_agent_quota_rules (
     name,
     is_default,
     enabled,
+    mode,
     request_limit,
     input_token_limit,
     output_token_limit,
@@ -63,6 +64,7 @@ VALUES (
     '默认员工额度',
     TRUE,
     TRUE,
+    'soft',
     1000,
     NULL,
     NULL,
@@ -75,6 +77,7 @@ DO UPDATE SET
     name = EXCLUDED.name,
     is_default = EXCLUDED.is_default,
     enabled = EXCLUDED.enabled,
+    mode = EXCLUDED.mode,
     request_limit = EXCLUDED.request_limit,
     input_token_limit = EXCLUDED.input_token_limit,
     output_token_limit = EXCLUDED.output_token_limit,

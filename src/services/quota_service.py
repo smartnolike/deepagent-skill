@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config.agent_settings import AgentSettings
@@ -60,6 +61,19 @@ class QuotaService:
         if existing is not None:
             return existing
 
+        active_event = await self._session.scalar(
+            select(StaffUsageEvent.id).where(
+                StaffUsageEvent.staff_id == staff_id,
+                StaffUsageEvent.status == "reserved",
+            )
+        )
+        if active_event is not None:
+            raise DomainError(
+                "REQUEST_IN_PROGRESS",
+                "An AI request is already in progress for this account",
+                409,
+            )
+
         pricing = await self._current_pricing()
         reserved_output = int(rule.max_output_tokens or 0)
         if reserved_output == 0 and any(
@@ -111,7 +125,23 @@ class QuotaService:
             conversation_id=conversation_id,
         )
         self._session.add(event)
-        await self._session.commit()
+        try:
+            await self._session.commit()
+        except IntegrityError as exc:
+            await self._session.rollback()
+            active_event = await self._session.scalar(
+                select(StaffUsageEvent.id).where(
+                    StaffUsageEvent.staff_id == staff_id,
+                    StaffUsageEvent.status == "reserved",
+                )
+            )
+            if active_event is not None:
+                raise DomainError(
+                    "REQUEST_IN_PROGRESS",
+                    "An AI request is already in progress for this account",
+                    409,
+                ) from exc
+            raise
         await self._session.refresh(event)
         return event
 
@@ -210,6 +240,7 @@ class QuotaService:
                 "name": rule.name,
                 "is_default": rule.is_default,
                 "enabled": rule.enabled,
+                "mode": rule.mode,
             },
             "limits": {
                 "requests": _dimension(rule.request_limit, counters, "request"),
@@ -346,12 +377,23 @@ def _ensure_within_limits(
     output_tokens: int,
     cost_micro_usd: int,
 ) -> None:
-    checks = (
-        (rule.request_limit, usage.request_used + usage.request_reserved + 1),
-        (rule.input_token_limit, usage.input_tokens_used + usage.input_tokens_reserved + input_tokens),
-        (rule.output_token_limit, usage.output_tokens_used + usage.output_tokens_reserved + output_tokens),
-        (rule.total_token_limit, usage.total_tokens_used + usage.total_tokens_reserved + input_tokens + output_tokens),
-        (rule.cost_micro_usd_limit, usage.cost_micro_usd_used + usage.cost_micro_usd_reserved + cost_micro_usd),
+    current = (
+        (rule.request_limit, usage.request_used + usage.request_reserved),
+        (rule.input_token_limit, usage.input_tokens_used + usage.input_tokens_reserved),
+        (rule.output_token_limit, usage.output_tokens_used + usage.output_tokens_reserved),
+        (rule.total_token_limit, usage.total_tokens_used + usage.total_tokens_reserved),
+        (rule.cost_micro_usd_limit, usage.cost_micro_usd_used + usage.cost_micro_usd_reserved),
     )
-    if any(limit is not None and value > limit for limit, value in checks):
+    if rule.mode == "soft":
+        exceeded = any(limit is not None and value >= limit for limit, value in current)
+    else:
+        projected = (
+            (rule.request_limit, usage.request_used + usage.request_reserved + 1),
+            (rule.input_token_limit, usage.input_tokens_used + usage.input_tokens_reserved + input_tokens),
+            (rule.output_token_limit, usage.output_tokens_used + usage.output_tokens_reserved + output_tokens),
+            (rule.total_token_limit, usage.total_tokens_used + usage.total_tokens_reserved + input_tokens + output_tokens),
+            (rule.cost_micro_usd_limit, usage.cost_micro_usd_used + usage.cost_micro_usd_reserved + cost_micro_usd),
+        )
+        exceeded = any(limit is not None and value > limit for limit, value in projected)
+    if exceeded:
         raise DomainError("QUOTA_EXCEEDED", "Monthly AI usage limit has been reached", 429)

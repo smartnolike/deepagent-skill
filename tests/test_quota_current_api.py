@@ -75,6 +75,7 @@ def test_current_quota_includes_used_and_reserved_amounts(client) -> None:
         "name": "Default quota",
         "is_default": True,
         "enabled": True,
+        "mode": "soft",
     }
     assert body["limits"]["requests"] == {
         "limit": 100,

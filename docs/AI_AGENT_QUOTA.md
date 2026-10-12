@@ -49,6 +49,7 @@ staff_id + period_month
 | `name` | VARCHAR(255) | `默认员工额度` | 前端/管理端展示名。 |
 | `is_default` | BOOLEAN | 同时最多一条为 `true` | 没有员工专属绑定时使用的规则。 |
 | `enabled` | BOOLEAN | 默认 `true` | 为 `false` 时命中该规则的请求返回 `403 QUOTA_DISABLED`。 |
+| `mode` | VARCHAR(10) | `soft`（默认）或 `strict` | `soft` 允许最后一条请求在结算后略超额，之后阻止新请求；`strict` 按本次完整预占量判定，预计超额即拒绝。 |
 | `request_limit` | BIGINT NULL | `1000` | 单员工单月请求上限；`NULL` 代表不限。 |
 | `input_token_limit` | BIGINT NULL | `NULL` | 单员工单月输入 Token 上限。 |
 | `output_token_limit` | BIGINT NULL | `NULL` | 单员工单月输出 Token 上限，含 reasoning。 |
@@ -116,10 +117,11 @@ staff_id + period_month
 | `cost_micro_usd_reserved` | BIGINT | 当前预占费用。 |
 | `updated_at` | TIMESTAMPTZ | 最近一次预占、结算或释放时间。 |
 
-额度判断统一使用：
+所有规则均会记录执行中预占，用于展示、usage 缺失时的保守结算，以及确保同一 `staff_id` 同时最多只有一条模型请求。准入判定由 `mode` 决定：
 
 ```text
-已结算值 + 已预占值 + 本次请求预占值 <= 规则上限
+strict: 已结算值 + 已预占值 + 本次请求预占值 <= 规则上限
+soft:   已结算值 + 已预占值 < 规则上限；本次结算后可略超额，后续请求被拒绝
 ```
 
 ### `ai_agent_staff_usage_events`
@@ -152,13 +154,15 @@ staff_id + period_month
 | `created_at` / `settled_at` | TIMESTAMPTZ | 预占、结算或释放时间。 |
 | `error_code` | VARCHAR(100) NULL | 释放/失败时的内部原因，例如 `AGENT_FAILED`。 |
 
+数据库为 `status = reserved` 的记录建立了按 `staff_id` 的部分唯一索引。因此不论员工打开多少聊天窗口，同一时刻最多只能有一条模型请求执行；第二条请求返回 `409 REQUEST_IN_PROGRESS`。该限制只对命中额度规则的员工生效。
+
 ## 调用与结算流程
 
 ```text
 POST /messages
   → 根据 staff_id 选择规则
   → 读取当前 provider + model 的有效价格
-  → 预估输入并按 max_output_tokens 预占所有已启用维度
+  → 检查该 staff_id 没有其他执行中的额度事件，预估输入并按 max_output_tokens 记录预占
   → 通过后才启动 SSE / 模型调用
   → 从模型 usage_metadata 收集输入、缓存读取、缓存写入、输出及 reasoning Token
   → 按实际使用量结算；未取得用量时保守地按预占值结算
@@ -204,7 +208,8 @@ quota_admin_token: ${QUOTA_ADMIN_TOKEN}
     "code": "default",
     "name": "默认员工额度",
     "is_default": true,
-    "enabled": true
+    "enabled": true,
+    "mode": "soft"
   },
   "limits": {
     "requests": {"limit": 1000, "used": 128, "reserved": 1, "consumed": 129, "remaining": 871},
@@ -239,6 +244,7 @@ Content-Type: application/json
 | 状态 | code | 含义 |
 | --- | --- | --- |
 | 403 | `QUOTA_DISABLED` | 命中的规则已禁用。 |
+| 409 | `REQUEST_IN_PROGRESS` | 同一员工已有一条模型请求正在执行。 |
 | 503 | `MODEL_PRICING_NOT_CONFIGURED` | 当前模型没有有效价格记录。 |
 | 503 | `QUOTA_MAX_OUTPUT_NOT_CONFIGURED` | 启用了成本、总 Token 或输出 Token 限制，但规则未配置 `max_output_tokens`，无法安全预占。 |
 
