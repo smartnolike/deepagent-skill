@@ -35,6 +35,7 @@ from mcp_runtime.mcp_client_manager import McpClientManager
 from mcp_runtime.mcp_header_resolver import McpHeaderResolver
 from observability.langfuse_observability import LangfuseObservability
 from services.memory_service import MemoryService
+from services.quota_service import QuotaService
 from sandbox.workspace_cleanup import gke_workspace_cleanup_loop
 
 logger = logging.getLogger(__name__)
@@ -76,6 +77,14 @@ def create_app(settings: Settings | None = None, database_url: str | None = None
         app.state.ready = False
         app.state.engine = engine
         app.state.session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        # In the production single-instance deployment, a process restart interrupts
+        # every in-flight stream.  Release their durable quota reservations before
+        # accepting traffic again.  Tests inject a database URL before schema setup.
+        if database_url is None:
+            async with app.state.session_factory() as session:
+                recovered = await QuotaService(session, runtime_settings.agent).recover_startup_reservations()
+                if recovered:
+                    logger.warning("quota_startup_recovery_complete count=%s", recovered)
         app.state.mcp_manager = McpClientManager(
             runtime_settings,
             McpHeaderResolver(

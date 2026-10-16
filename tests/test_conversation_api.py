@@ -161,6 +161,23 @@ def test_explicit_memories_are_staff_isolated(client) -> None:
 def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None:
     """流已经开始后发生异常也必须返回可与后端日志关联的 error_id。"""
     headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
+
+    async def configure_quota() -> None:
+        async with client.app.state.session_factory() as session:
+            session.add(QuotaRule(code="default", name="Default", is_default=True, max_output_tokens=100))
+            session.add(
+                ModelPricing(
+                    provider="openai",
+                    model="test-model",
+                    effective_from=datetime.date(2020, 1, 1),
+                    input_micro_usd_per_mtok=1_000_000,
+                    cached_input_micro_usd_per_mtok=100_000,
+                    output_micro_usd_per_mtok=2_000_000,
+                )
+            )
+            await session.commit()
+
+    asyncio.run(configure_quota())
     conversation_id = client.post("/agent/api/conversations", headers=headers, json={"staff_id": "staff-a"}).json()["id"]
 
     async def failing_reply(*_):
@@ -178,6 +195,18 @@ def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None
     assert "event: error" in response.text
     assert '"code": "AGENT_ERROR"' in response.text
     assert '"error_id":' in response.text
+
+    async def verify_release() -> None:
+        async with client.app.state.session_factory() as session:
+            event = await session.scalar(select(StaffUsageEvent))
+            counters = await session.get(StaffMonthlyUsage, ("staff-a", datetime.date.today().replace(day=1)))
+            assert event is not None
+            assert counters is not None
+            assert event.status == "released"
+            assert event.error_code == "AGENT_FAILED"
+            assert counters.request_reserved == 0
+
+    asyncio.run(verify_release())
 
 
 def test_tool_confirmation_is_persisted_restorable_and_decided_once(client, monkeypatch) -> None:

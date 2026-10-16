@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import math
 import uuid
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ from database.models.agent.quota import (
 )
 
 _MICRO_USD_PER_MILLION = 1_000_000
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -213,6 +215,28 @@ class QuotaService:
         event.error_code = error_code[:100]
         event.settled_at = datetime.now(UTC)
         await self._session.commit()
+
+    async def recover_startup_reservations(self) -> int:
+        """Release reservations left by a process that stopped before it could settle them.
+
+        This is deliberately a single-instance startup recovery mechanism.  A deployment
+        with concurrent application instances must use an expiring lease instead, so one
+        instance cannot release another instance's live model invocation.
+        """
+        events = list(
+            (
+                await self._session.scalars(
+                    select(StaffUsageEvent)
+                    .where(StaffUsageEvent.status == "reserved")
+                    .order_by(StaffUsageEvent.created_at)
+                )
+            ).all()
+        )
+        for event in events:
+            await self.release(event, "SERVICE_RESTART_RECOVERY")
+        if events:
+            logger.warning("quota_startup_reservations_recovered count=%s", len(events))
+        return len(events)
 
     async def current_summary(self, staff_id: str) -> dict[str, object]:
         """Return the current-month quota view without creating counters or changing reservations."""

@@ -207,20 +207,23 @@ class ConversationService:
         response_language: ResponseLanguage,
         quota_event: StaffUsageEvent | None = None,
     ) -> AsyncIterator[tuple[str, dict[str, object]]]:
-        await self._require_conversation(conversation_id, staff_id, response_language)
-        previous_history = await self._messages.list(conversation_id)
-        previous_language = _language_from_history(previous_history)
-        response_language = resolve_response_language(content, previous_language=previous_language)
-        user_message = await self._messages.create(conversation_id, "user", content)
-        if getattr(self._agent_service, "gke_workspace_service", None) is not None:
-            await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
-        run = await self._runs.create(conversation_id, user_message.id)
-        logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
-        history = await self._messages.list(conversation_id)
-        answer_parts: list[str] = []
-        total_usage = Usage(0, 0, 0, 0)
-        usage_seen = False
+        run: AgentRun | None = None
+        quota_finalized = False
+        release_error_code = "UNEXPECTED_TERMINATION"
         try:
+            await self._require_conversation(conversation_id, staff_id, response_language)
+            previous_history = await self._messages.list(conversation_id)
+            previous_language = _language_from_history(previous_history)
+            response_language = resolve_response_language(content, previous_language=previous_language)
+            user_message = await self._messages.create(conversation_id, "user", content)
+            if getattr(self._agent_service, "gke_workspace_service", None) is not None:
+                await ConversationWorkspaceRepository(self._session).touch(conversation_id, staff_id)
+            run = await self._runs.create(conversation_id, user_message.id)
+            logger.info("agent_run_started agent_run_id=%s conversation_id=%s staff_id=%s", run.id, conversation_id, staff_id)
+            history = await self._messages.list(conversation_id)
+            answer_parts: list[str] = []
+            total_usage = Usage(0, 0, 0, 0)
+            usage_seen = False
             async for event, payload in self._agent_service.reply(
                 conversation_id, staff_id, run.id, content, history, response_language
             ):
@@ -237,6 +240,7 @@ class ConversationService:
                         payload = {**payload, **self._confirmation_payload(confirmation)}
                     await self._runs.await_confirmation(run)
                     await self._settle_quota(quota_event, total_usage if usage_seen else None)
+                    quota_finalized = True
                     logger.info("agent_run_awaiting_confirmation agent_run_id=%s", run.id)
                     yield event, payload
                     return
@@ -245,19 +249,22 @@ class ConversationService:
             await self._artifacts.attach_to_assistant_message(run.id, assistant.id)
             await self._runs.complete(run)
             await self._settle_quota(quota_event, total_usage if usage_seen else None)
+            quota_finalized = True
             logger.info("agent_run_completed agent_run_id=%s conversation_id=%s", run.id, conversation_id)
             yield "done", {"message_id": str(assistant.id), "conversation_id": str(conversation_id)}
         except asyncio.CancelledError:
-            await self._release_quota(quota_event, "CLIENT_CANCELLED")
-            await self._mark_run_cancelled(run, conversation_id)
+            release_error_code = "CLIENT_CANCELLED"
+            if run is not None:
+                await self._mark_run_cancelled(run, conversation_id)
             raise
         except Exception as exc:
+            release_error_code = "AGENT_FAILED"
             error_id = str(uuid.uuid4())
             logger.exception(
                 "agent_run_failed",
                 extra={
                     "fields": {
-                        "agent_run_id": str(run.id),
+                        "agent_run_id": str(run.id) if run is not None else None,
                         "conversation_id": str(conversation_id),
                         "staff_id": staff_id,
                         "error_id": error_id,
@@ -265,9 +272,24 @@ class ConversationService:
                     }
                 },
             )
-            await self._mark_run_failed(run, conversation_id, error_id)
-            await self._release_quota(quota_event, "AGENT_FAILED")
+            if run is not None:
+                await self._mark_run_failed(run, conversation_id, error_id)
             raise
+        finally:
+            if not quota_finalized:
+                try:
+                    await self._release_quota(quota_event, release_error_code)
+                except Exception:
+                    logger.exception(
+                        "quota_release_failed",
+                        extra={
+                            "fields": {
+                                "conversation_id": str(conversation_id),
+                                "staff_id": staff_id,
+                                "agent_run_id": str(run.id) if run is not None else None,
+                            }
+                        },
+                    )
 
     async def _settle_quota(self, quota_event: StaffUsageEvent | None, usage: Usage | None) -> None:
         if self._quota_service is not None:

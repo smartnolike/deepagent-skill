@@ -5,9 +5,10 @@ import uuid
 from datetime import UTC, date, datetime
 
 import pytest
+from sqlalchemy import select
 
 from core.errors import DomainError
-from database.models.agent.quota import ModelPricing, QuotaRule, StaffMonthlyUsage
+from database.models.agent.quota import ModelPricing, QuotaRule, StaffMonthlyUsage, StaffUsageEvent
 from services.quota_service import QuotaService, Usage
 
 
@@ -86,5 +87,33 @@ def test_only_one_active_quota_request_is_allowed_per_staff(client) -> None:
                 await service.reserve("staff-a", "request-2", uuid.uuid4(), estimated_input_tokens=100)
             assert error.value.code == "REQUEST_IN_PROGRESS"
             assert error.value.status_code == 409
+
+    asyncio.run(exercise())
+
+
+def test_startup_recovery_releases_reserved_events_and_counters(client) -> None:
+    async def exercise() -> None:
+        async with client.app.state.session_factory() as session:
+            await _seed(session, "soft")
+            service = QuotaService(session, client.app.state.settings.agent)
+            event = await service.reserve("staff-a", "request-1", uuid.uuid4(), estimated_input_tokens=100)
+            assert event is not None
+
+        async with client.app.state.session_factory() as session:
+            recovered = await QuotaService(session, client.app.state.settings.agent).recover_startup_reservations()
+            assert recovered == 1
+
+        async with client.app.state.session_factory() as session:
+            event = await session.scalar(select(StaffUsageEvent).where(StaffUsageEvent.request_id == "request-1"))
+            counters = await session.get(StaffMonthlyUsage, ("staff-a", datetime.now(UTC).date().replace(day=1)))
+            assert event is not None
+            assert counters is not None
+            assert event.status == "released"
+            assert event.error_code == "SERVICE_RESTART_RECOVERY"
+            assert counters.request_reserved == 0
+            assert counters.input_tokens_reserved == 0
+            assert counters.output_tokens_reserved == 0
+            assert counters.total_tokens_reserved == 0
+            assert counters.cost_micro_usd_reserved == 0
 
     asyncio.run(exercise())
