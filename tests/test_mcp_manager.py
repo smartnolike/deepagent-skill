@@ -279,11 +279,14 @@ async def test_registry_hides_and_overrides_system_context_arguments(monkeypatch
 
 
 @pytest.mark.asyncio
-async def test_startup_fails_when_allowlisted_tool_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A configured Tool missing from MCP discovery must block Agent startup."""
+async def test_startup_degrades_when_allowlisted_tool_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failed MCP discovery must not prevent other application resources from starting."""
     FakeMcpClient.instances.clear()
     monkeypatch.setattr(manager_module, "McpClient", FakeMcpClient)
     manager = McpClientManager(_settings(tools=["missing_tool"]))
 
-    with pytest.raises(RuntimeError, match="does not expose allowlisted tools"):
-        await manager.start()
+    await manager.start()
+
+    assert manager.tool_definitions == {}
+    assert FakeMcpClient.instances[0].close_calls == 1
+    await manager.close()

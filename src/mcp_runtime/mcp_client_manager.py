@@ -62,12 +62,17 @@ class McpClientManager:
         )
         for server_id in enabled_servers:
             self._locks[server_id] = asyncio.Lock()
-        try:
-            for server_id in enabled_servers:
+        for server_id in enabled_servers:
+            try:
                 await self._connect_and_discover(server_id, startup=True)
-        except Exception:
-            await self.close()
-            raise
+            except Exception as exc:
+                # MCP 不可用不能阻断主应用启动。_connect_and_discover 已关闭本次
+                # 失败的 client；该 server 不会有 Tool 注册到 Agent，待服务重启后
+                # 再重新发现其 Tool 契约。
+                logger.warning(
+                    "mcp_startup_degraded",
+                    extra={"fields": {"server_id": server_id, "error_type": type(exc).__name__}},
+                )
         logger.info(
             "mcp_manager_initialized",
             extra={
