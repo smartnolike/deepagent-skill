@@ -192,10 +192,14 @@ class QuotaService:
 
     async def release(self, event: StaffUsageEvent | None, error_code: str) -> None:
         """Release an invocation that did not reach a billable model response."""
-        if event is None or event.status != "reserved":
+        if event is None:
             return
+        await self.release_by_id(event.id, error_code)
+
+    async def release_by_id(self, event_id: uuid.UUID, error_code: str) -> None:
+        """Release an invocation by ID without relying on a caller-owned ORM session state."""
         event = await self._session.scalar(
-            select(StaffUsageEvent).where(StaffUsageEvent.id == event.id).with_for_update()
+            select(StaffUsageEvent).where(StaffUsageEvent.id == event_id).with_for_update()
         )
         if event is None or event.status != "reserved":
             return

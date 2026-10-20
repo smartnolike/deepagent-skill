@@ -30,6 +30,8 @@ def _service(request: Request, session=Depends(get_db_session)) -> ConversationS
         request.app.state.agent_service,
         request.app.state.memory_service,
         QuotaService(session, request.app.state.settings.agent),
+        request.app.state.session_factory,
+        request.app.state.settings.agent,
     )
 
 

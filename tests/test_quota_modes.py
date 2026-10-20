@@ -4,11 +4,14 @@ import asyncio
 import uuid
 from datetime import UTC, date, datetime
 
+import anyio
 import pytest
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from core.errors import DomainError
 from database.models.agent.quota import ModelPricing, QuotaRule, StaffMonthlyUsage, StaffUsageEvent
+from services.conversation_service import ConversationService
 from services.quota_service import QuotaService, Usage
 
 
@@ -115,5 +118,60 @@ def test_startup_recovery_releases_reserved_events_and_counters(client) -> None:
             assert counters.output_tokens_reserved == 0
             assert counters.total_tokens_reserved == 0
             assert counters.cost_micro_usd_reserved == 0
+
+    asyncio.run(exercise())
+
+
+def test_cancelled_request_with_failed_session_releases_quota_from_a_new_session(client) -> None:
+    """SSE cancellation must not reuse the transaction that was already rolled back by a flush error."""
+
+    async def exercise() -> None:
+        async with client.app.state.session_factory() as request_session:
+            await _seed(request_session, "soft")
+            quota_service = QuotaService(request_session, client.app.state.settings.agent)
+            event = await quota_service.reserve("staff-a", "request-1", uuid.uuid4(), estimated_input_tokens=100)
+            assert event is not None
+            event_id = event.id
+
+            request_session.add(
+                StaffMonthlyUsage(
+                    staff_id="staff-a",
+                    period_month=datetime.now(UTC).date().replace(day=1),
+                )
+            )
+            with pytest.raises(IntegrityError):
+                await request_session.flush()
+
+            service = ConversationService(
+                request_session,
+                None,  # type: ignore[arg-type]
+                None,  # type: ignore[arg-type]
+                quota_service,
+                client.app.state.session_factory,
+                client.app.state.settings.agent,
+            )
+
+            async def release_after_cancellation() -> None:
+                try:
+                    await anyio.sleep_forever()
+                except asyncio.CancelledError:
+                    await service._release_quota(event_id, "CLIENT_CANCELLED")
+                    raise
+
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(release_after_cancellation)
+                await anyio.sleep(0)
+                task_group.cancel_scope.cancel()
+
+        async with client.app.state.session_factory() as verify_session:
+            recovered = await verify_session.get(StaffUsageEvent, event_id)
+            counters = await verify_session.get(
+                StaffMonthlyUsage, ("staff-a", datetime.now(UTC).date().replace(day=1))
+            )
+            assert recovered is not None
+            assert counters is not None
+            assert recovered.status == "released"
+            assert recovered.error_code == "CLIENT_CANCELLED"
+            assert counters.request_reserved == 0
 
     asyncio.run(exercise())

@@ -10,11 +10,13 @@ import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 
+import anyio
 from fastapi import status
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from agent.harness_service import DeepAgentHarnessService
 from common.language import ResponseLanguage, resolve_response_language
+from config.agent_settings import AgentSettings
 from core.errors import DomainError
 from database.models.agent.agent_run import AgentRun
 from database.models.agent.quota import StaffUsageEvent
@@ -31,6 +33,7 @@ from services.quota_service import QuotaService, Usage, estimate_input_tokens, n
 
 logger = logging.getLogger(__name__)
 _SENSITIVE_ARGUMENT_KEY_PARTS = frozenset({"password", "secret", "token", "authorization", "credential", "api_key"})
+_QUOTA_RELEASE_TIMEOUT_SECONDS = 5
 
 
 class ConversationService:
@@ -42,6 +45,8 @@ class ConversationService:
         agent_service: DeepAgentHarnessService,
         memory_service: MemoryService,
         quota_service: QuotaService | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
+        agent_settings: AgentSettings | None = None,
     ) -> None:
         self._session = session
         self._conversations = ConversationRepository(session)
@@ -52,6 +57,8 @@ class ConversationService:
         self._agent_service = agent_service
         self._memory_service = memory_service
         self._quota_service = quota_service
+        self._session_factory = session_factory
+        self._agent_settings = agent_settings
 
     async def reserve_message(
         self,
@@ -210,6 +217,7 @@ class ConversationService:
         run: AgentRun | None = None
         quota_finalized = False
         release_error_code = "UNEXPECTED_TERMINATION"
+        quota_event_id = quota_event.id if quota_event is not None else None
         try:
             await self._require_conversation(conversation_id, staff_id, response_language)
             previous_history = await self._messages.list(conversation_id)
@@ -278,7 +286,7 @@ class ConversationService:
         finally:
             if not quota_finalized:
                 try:
-                    await self._release_quota(quota_event, release_error_code)
+                    await self._release_quota(quota_event_id, release_error_code)
                 except Exception:
                     logger.exception(
                         "quota_release_failed",
@@ -295,9 +303,21 @@ class ConversationService:
         if self._quota_service is not None:
             await self._quota_service.settle(quota_event, usage)
 
-    async def _release_quota(self, quota_event: StaffUsageEvent | None, error_code: str) -> None:
-        if self._quota_service is not None:
-            await self._quota_service.release(quota_event, error_code)
+    async def _release_quota(self, quota_event_id: uuid.UUID | None, error_code: str) -> None:
+        """Release quota after a stream failure without reusing a cancelled request session."""
+        if quota_event_id is None or self._quota_service is None:
+            return
+        if self._session_factory is None or self._agent_settings is None:
+            await self._quota_service.release_by_id(quota_event_id, error_code)
+            return
+
+        with anyio.move_on_after(_QUOTA_RELEASE_TIMEOUT_SECONDS, shield=True) as cleanup_scope:
+            async with self._session_factory() as cleanup_session:
+                await QuotaService(cleanup_session, self._agent_settings).release_by_id(
+                    quota_event_id, error_code
+                )
+        if cleanup_scope.cancel_called:
+            logger.error("quota_release_timed_out quota_event_id=%s", quota_event_id)
 
     async def confirm_tool(
         self,
