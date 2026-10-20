@@ -152,7 +152,7 @@ soft:   已结算值 + 已预占值 < 规则上限；本次结算后可略超额
 | `output_rate_snapshot` | BIGINT | 本次输出价格快照。 |
 | `conversation_id` | UUID NULL | FK → `ai_agent_conversation.id`，关联会话。 |
 | `created_at` / `settled_at` | TIMESTAMPTZ | 预占、结算或释放时间。 |
-| `error_code` | VARCHAR(100) NULL | 释放/失败时的内部原因，例如 `AGENT_FAILED`。 |
+| `error_code` | VARCHAR(100) NULL | 释放/失败时的内部原因，例如 `AGENT_FAILED`、`CLIENT_CANCELLED` 或 `SERVICE_RESTART_RECOVERY`。 |
 
 数据库为 `status = reserved` 的记录建立了按 `staff_id` 的部分唯一索引。因此不论员工打开多少聊天窗口，同一时刻最多只能有一条模型请求执行；第二条请求返回 `409 REQUEST_IN_PROGRESS`。该限制只对命中额度规则的员工生效。
 
@@ -169,6 +169,37 @@ POST /messages
 ```
 
 响应中的 reasoning Token 会计入输出 Token。ChatOpenAI 的 `output_tokens` 已包含 reasoning，不能再重复相加；Vertex 的隐藏 reasoning 则单独合并到输出。每次账本事件保存命中的价格快照，因此后续修改价格不会影响历史账目。
+
+### SSE 断连、释放与启动回收
+
+模型流因浏览器断开、Ingress/负载均衡器超时或 Agent 异常而结束时，账本事件应从 `reserved` 释放为 `released`，并在同一数据库事务中归还 `ai_agent_staff_monthly_usages` 的全部预占计数。取消仍沿用现有计费口径：释放预占，不将尚未取得最终 usage 的调用结算为已用量。
+
+请求自己的 SQLAlchemy Session 可能已因取消或 `flush` 失败而无法继续使用。因此释放逻辑会保存 usage event ID，并在最多 5 秒的取消保护范围内创建独立 Session，按 ID 重新读取、锁定和释放事件。事件已被结算或释放时，清理安全地跳过，不会重复扣减计数。
+
+应用启动时还会回收遗留的 `reserved` 事件，并以 `SERVICE_RESTART_RECOVERY` 作为 `error_code`。该启动回收仅适用于单实例、且新旧实例不会同时处理请求的部署；多副本或滚动发布重叠的部署必须改用租约/心跳方案，避免新实例释放其他实例的活跃调用。
+
+若数据库持续不可用或独立清理超过 5 秒，事件可能暂时保持 `reserved`，需要通过后续应用启动回收或运维排查处理。
+
+### 释放运维日志
+
+释放路径以 `quota_event_id` 和请求关联字段串联日志：
+
+| 日志消息 | 含义 |
+| --- | --- |
+| `quota_release_started` | 已开始准备释放，包含 `quota_event_id` 和 `error_code`。 |
+| `quota_release_completed` | 释放流程已结束；`released=true` 表示本次确实更新了账本并归还预占，`released=false` 表示事件已被其他流程结算或释放。 |
+| `quota_release_timed_out` | 独立 Session 清理超过 5 秒；账本可能仍是 `reserved`。 |
+| `quota_release_failed` | 清理发生普通异常；按同一 `conversation_id`、`staff_id` 和 `agent_run_id` 查找紧邻的 `quota_release_started`，以取得对应事件 ID 并定位数据库错误。 |
+
+可用以下只读查询排查残留预占：
+
+```sql
+SELECT id, request_id, staff_id, conversation_id, status, error_code, created_at, settled_at
+FROM ai_agent_staff_usage_events
+WHERE staff_id = '<staff_id>'
+  AND status = 'reserved'
+ORDER BY created_at;
+```
 
 ## 模型与价格配置
 

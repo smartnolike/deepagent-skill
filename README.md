@@ -40,12 +40,14 @@ set AGENT_ENV=local
 `ProactorEventLoop`。PyCharm Run Configuration 应运行 `src/main.py`，而不是 FastAPI / Uvicorn 类型的配置。
 
 `GET /health` 不需要认证，并在应用、PostgreSQL、Checkpointer 与 Agent 初始化完成后返回 `{"status":"ok"}`。
-已启用的 MCP 在服务启动时必须完成连接、`initialize()` 与 `list_tools()`；应用仅将 YAML 白名单中的
-真实 Tool Schema 注册给 DeepAgent。任一启用 MCP 不可用、或缺少白名单 Tool 时，应用启动失败。运行中 MCP
-服务重启导致 Session 失效时，应用会自动建立新 Session 并使用原始参数重试该 Tool 一次；再次失败时返回受控错误。
+已启用的 MCP 会在服务启动时尝试连接、执行 `initialize()` 与 `list_tools()`；应用仅将 YAML 白名单中的
+真实 Tool Schema 注册给 DeepAgent。单个 MCP 不可用、或缺少白名单 Tool 时，会记录 `mcp_startup_degraded` 并跳过该
+server，不阻断应用启动；该 server 的 Tool 不会注册给当前运行的 DeepAgent。MCP 在启动发现失败后恢复时，需重启服务
+才能重新发现并注册其 Tool。已在启动时成功发现的 MCP 若在运行中 Session 失效，应用会自动建立新 Session 并使用原始
+参数重试该 Tool 一次；再次失败时返回受控错误。
 每个 HTTP MCP 可通过 `root_ca_path` 配置内部根证书；示例配置默认读取
 `${MCP_ROOT_CA_PATH:-build/root.cer}`。MCP 会同时信任系统根证书与该 PEM 格式的根证书，且始终校验证书主机名；
-根证书为空或缺失时，已启用的 MCP 会在启动阶段失败，而不会降级为跳过 TLS 校验。
+根证书为空或缺失时，对应 MCP 的启动发现会失败，而不会降级为跳过 TLS 校验；应用仍按上述 MCP 降级规则启动。
 所有 `/agent/api/*` calls require `Authorization: Bearer <api_auth_token>`。local、dev、prod 都必须配置真实
 `agent.model`、PostgreSQL 与 HTTP MCP；测试中的 Agent、数据库与 MCP 替身仅在测试层注入，生产代码不提供 Mock fallback。
 DeepAgent Skill 位于与 `src/` 同级的 `skill-packages/`，通过 YAML 的 `agent.enabled_skills` 启用。

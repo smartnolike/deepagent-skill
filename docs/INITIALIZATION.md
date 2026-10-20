@@ -203,6 +203,7 @@ data: {...}
 - Conversation / Agent run：`conversation_id`、`staff_id`、`agent_run_id`、`status`、`duration_ms`；不记录用户消息或模型回复正文。
 - MCP 调用：`tool_name`、`outcome`、`duration_ms`、`request_id`；不记录未脱敏参数或完整 tool 返回。
 - 异常：使用 `logger.exception` 记录 stack trace，并仅记录经脱敏的错误摘要；不得记录密码、API token、Authorization header、完整 message 内容或敏感 MCP 参数。SSE 异常必须生成 `error_id`，写入日志并以稳定 `event: error` 返回客户端；客户端断连记录为 cancelled，不得误报为 Agent failed。
+- 额度释放：流取消或执行失败时，依次记录 `quota_release_started` 和 `quota_release_completed`，并带 `quota_event_id`、`error_code` 和 `released`。`quota_release_timed_out` 或 `quota_release_failed` 表示预占可能残留，需按事件 ID 关联数据库账本和应用日志排查。
 
 日志只写 stdout，由 local / dev / prod 的运行平台负责采集；不创建业务日志表，也不将日志写入 PostgreSQL。`staff_id`、`conversation_id` 等标识如属于敏感数据，应遵循部署环境的日志访问控制与保留策略。
 
@@ -263,11 +264,11 @@ mcp_servers:
         body.creatorEmail: ""
 ```
 
-`src/mcp_runtime/mcp_client_manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源。该目录不能命名为 `mcp`，否则在 `src` 作为 Python 模块根目录时会遮蔽第三方 MCP SDK 的 `mcp` 包。FastAPI lifespan 启动时必须为每个 `enabled: true` 的 HTTP MCP 建立连接、执行 `initialize()` 和 `list_tools()`，并以服务端返回的 `name`、`description`、`inputSchema` 作为 Tool 契约。YAML 的 `tools` 仅是白名单：服务端未暴露任何白名单 Tool 时应用启动失败；`enabled: false` 的 server 不连接、不发现、也不向模型暴露 Tool。Registry 必须用真实 `inputSchema` 注册 LangChain Tool，禁止以 `**arguments` 推断通用 schema，避免将业务参数错误包装为 `{ "arguments": {...} }`。
+`src/mcp_runtime/mcp_client_manager.py` 负责根据配置创建、保存并关闭每个 MCP client 的连接资源。该目录不能命名为 `mcp`，否则在 `src` 作为 Python 模块根目录时会遮蔽第三方 MCP SDK 的 `mcp` 包。FastAPI lifespan 会为每个 `enabled: true` 的 HTTP MCP 尝试建立连接、执行 `initialize()` 和 `list_tools()`，并以服务端返回的 `name`、`description`、`inputSchema` 作为 Tool 契约。YAML 的 `tools` 仅是白名单：单个 server 无法连接、发现失败或未暴露白名单 Tool 时，Manager 关闭该失败 client、记录 `mcp_startup_degraded`，并继续启动应用；该 server 不注册任何 Tool 给当前运行的 DeepAgent。已跳过的 MCP 即使随后恢复，也须重启服务才能重新发现并注册其 Tool。`enabled: false` 的 server 不连接、不发现、也不向模型暴露 Tool。Registry 必须用真实 `inputSchema` 注册 LangChain Tool，禁止以 `**arguments` 推断通用 schema，避免将业务参数错误包装为 `{ "arguments": {...} }`。
 
-MCP 服务在应用启动后重启或断连时必须支持恢复：连接、transport 或超时异常将关闭并丢弃失效 client。Manager 使用每个 server 独立的 async lock 仅建立一个新 Session，重新执行 `initialize()` 与 `list_tools()`，确认白名单 Tool 仍存在后，以原始业务参数自动重试该次 Tool 调用一次；再次失败时返回受控 `MCP_UNAVAILABLE` error。当前版本对所有 MCP Tool 采用同一重试策略，暂不区分只读与写入 Tool。重连若发现 schema 变化，只记录需要重启服务的警告；运行中的 DeepAgent 保持启动时注册的 Tool 契约。成功或失败的连接、断开与重连事件必须记录 `server_id`、工具名、结果与 `duration_ms`，不记录连接凭据或业务参数。
+MCP 服务在应用启动后重启或断连时必须支持恢复：仅针对启动时已成功发现并注册的 MCP Tool，连接、transport 或超时异常将关闭并丢弃失效 client。Manager 使用每个 server 独立的 async lock 仅建立一个新 Session，重新执行 `initialize()` 与 `list_tools()`，确认白名单 Tool 仍存在后，以原始业务参数自动重试该次 Tool 调用一次；再次失败时返回受控 `MCP_UNAVAILABLE` error。当前版本对所有 MCP Tool 采用同一重试策略，暂不区分只读与写入 Tool。重连若发现 schema 变化，只记录需要重启服务的警告；运行中的 DeepAgent 保持启动时注册的 Tool 契约。成功或失败的连接、断开与重连事件必须记录 `server_id`、工具名、结果与 `duration_ms`，不记录连接凭据或业务参数。
 
-工具在 Agent registry 中必须使用 `server_id__tool_name` 作为唯一名称，例如 `danaan__external_resource_add`，以避免跨 server 重名。Skill 通过配置的稳定 server ID 调用所需工具；`tools` 白名单以外的 MCP Tool 不得注册给 Agent。local、dev 与 prod 均连接真实 HTTP MCP Server；测试替身仅可在测试层通过依赖注入或 monkeypatch 提供，生产代码不得包含 Mock MCP 实现。
+工具在 Agent registry 中必须使用 `server_id__tool_name` 作为唯一名称，例如 `danaan__external_resource_add`，以避免跨 server 重名。Skill 通过配置的稳定 server ID 调用所需工具；`tools` 白名单以外的 MCP Tool 不得注册给 Agent。local、dev 与 prod 对已配置 MCP 均使用真实 HTTP MCP Server；测试替身仅可在测试层通过依赖注入或 monkeypatch 提供，生产代码不得包含 Mock MCP 实现。
 
 MCP 可为特定 Tool 配置系统参数注入。`context_argument_bindings` 使用 `参数路径: runtime context key` 映射，例如 `body.creator: staff_id`；`fixed_arguments` 注入固定字符串。配置中的路径会从模型可见 JSON Schema（包括 `required`）移除，Tool 执行前由后端写回，并覆盖模型即使通过异常路径传入的值。当前仅允许绑定 `staff_id` 与 `conversation_id`。系统字段不得展示在表单、确认 SSE 或用户摘要中。
 
@@ -411,7 +412,7 @@ tests/test_conversation_api.py
 tests/test_agent_service.py
 ```
 
-覆盖：YAML 按 `AGENT_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、MCP 重启后的自动重连与单次重试、MCP schema 后继续交互、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 或 MCP 时仅可在测试层注入 fake。
+覆盖：YAML 按 `AGENT_ENV` 正确加载、local 必须有 password、dev/prod 可无 password、缺失或错误静态 token 返回 401、staff 不能读取或写入其他 staff 的 conversation、conversation 创建、user/assistant message 保存与恢复、conversation ID 正确传入 thread ID、每次 Agent 调用正确携带 staff ID 上下文、多个 MCP 的连接生命周期与工具命名空间隔离、单个 MCP 启动发现失败时应用仍能启动且不注册该 server Tool、MCP 重启后的自动重连与单次重试、MCP schema 后继续交互、Agent 出错时 `ai_agent_agent_run=failed`、`X-Request-ID` 回传与跨 HTTP/Agent/MCP 日志关联、日志不泄露 password/token/message 正文。测试不得依赖真实 Cloud SQL；无法使用真实 LLM 或 MCP 时仅可在测试层注入 fake。
 
 ## 18. 编码约束
 
