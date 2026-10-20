@@ -190,19 +190,19 @@ class QuotaService:
         event.settled_at = datetime.now(UTC)
         await self._session.commit()
 
-    async def release(self, event: StaffUsageEvent | None, error_code: str) -> None:
+    async def release(self, event: StaffUsageEvent | None, error_code: str) -> bool:
         """Release an invocation that did not reach a billable model response."""
         if event is None:
-            return
-        await self.release_by_id(event.id, error_code)
+            return False
+        return await self.release_by_id(event.id, error_code)
 
-    async def release_by_id(self, event_id: uuid.UUID, error_code: str) -> None:
+    async def release_by_id(self, event_id: uuid.UUID, error_code: str) -> bool:
         """Release an invocation by ID without relying on a caller-owned ORM session state."""
         event = await self._session.scalar(
             select(StaffUsageEvent).where(StaffUsageEvent.id == event_id).with_for_update()
         )
         if event is None or event.status != "reserved":
-            return
+            return False
         month = _period_month(event.created_at.date() if event.created_at else datetime.now(UTC).date())
         counters = await self._session.scalar(
             select(StaffMonthlyUsage)
@@ -219,6 +219,7 @@ class QuotaService:
         event.error_code = error_code[:100]
         event.settled_at = datetime.now(UTC)
         await self._session.commit()
+        return True
 
     async def recover_startup_reservations(self) -> int:
         """Release reservations left by a process that stopped before it could settle them.

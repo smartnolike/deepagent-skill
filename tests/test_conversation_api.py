@@ -158,7 +158,7 @@ def test_explicit_memories_are_staff_isolated(client) -> None:
     assert client.delete("/agent/api/memories/default-region?staff_id=staff-a", headers=headers).status_code == 204
 
 
-def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None:
+def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch, caplog) -> None:
     """流已经开始后发生异常也必须返回可与后端日志关联的 error_id。"""
     headers = {"Authorization": f"Bearer {TEST_AUTH_TOKEN}"}
 
@@ -195,6 +195,11 @@ def test_agent_stream_failure_returns_safe_error_id(client, monkeypatch) -> None
     assert "event: error" in response.text
     assert '"code": "AGENT_ERROR"' in response.text
     assert '"error_id":' in response.text
+    assert any(record.message.startswith("quota_release_started") for record in caplog.records)
+    assert any(
+        record.message.startswith("quota_release_completed") and "released=True" in record.message
+        for record in caplog.records
+    )
 
     async def verify_release() -> None:
         async with client.app.state.session_factory() as session:

@@ -307,17 +307,36 @@ class ConversationService:
         """Release quota after a stream failure without reusing a cancelled request session."""
         if quota_event_id is None or self._quota_service is None:
             return
+        logger.info(
+            "quota_release_started quota_event_id=%s error_code=%s",
+            quota_event_id,
+            error_code,
+        )
         if self._session_factory is None or self._agent_settings is None:
-            await self._quota_service.release_by_id(quota_event_id, error_code)
+            released = await self._quota_service.release_by_id(quota_event_id, error_code)
+            logger.info(
+                "quota_release_completed quota_event_id=%s error_code=%s released=%s",
+                quota_event_id,
+                error_code,
+                released,
+            )
             return
 
+        released = False
         with anyio.move_on_after(_QUOTA_RELEASE_TIMEOUT_SECONDS, shield=True) as cleanup_scope:
             async with self._session_factory() as cleanup_session:
-                await QuotaService(cleanup_session, self._agent_settings).release_by_id(
+                released = await QuotaService(cleanup_session, self._agent_settings).release_by_id(
                     quota_event_id, error_code
                 )
         if cleanup_scope.cancel_called:
             logger.error("quota_release_timed_out quota_event_id=%s", quota_event_id)
+            return
+        logger.info(
+            "quota_release_completed quota_event_id=%s error_code=%s released=%s",
+            quota_event_id,
+            error_code,
+            released,
+        )
 
     async def confirm_tool(
         self,
